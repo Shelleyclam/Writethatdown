@@ -14,7 +14,7 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
   - Hold **Right Ctrl** = dictate and paste into the focused app. Kept in short-term history only.
   - Hold **Right Alt** = dictate a note into the knowledge base (not pasted).
   - Any history item can be promoted to a note with one click.
-- **Pasting:** save the clipboard, put the text on it, simulate Ctrl+V, restore the original clipboard.
+- **Pasting:** save the clipboard, put the text on it, simulate Ctrl+V, restore the original clipboard. Implemented in `src/paste.rs`: saves every memory-backed clipboard format (text, HTML, files, images via CF_DIB), waits 300 ms after Ctrl+V before restoring, and marks both writes `ExcludeClipboardContentFromMonitorProcessing` so dictations stay out of Win+V history and cloud sync.
 - **Storage:** SQLite. Each dictation stores raw text, cleaned text, timestamp, and source app.
 - **Categories:** the LLM invents categories but must reuse existing ones when they fit (pass it the current list). "File this under X" at the start or end of a dictation is stripped and uses/creates category X. The UI must allow renaming and merging categories.
 - **Notes Q&A:** RAG. Embeddings with `nomic-embed-text` via Ollama, vectors in SQLite via `sqlite-vec`, chat window inside the app, answers cite source notes with dates. Notes can be long and rambling (several minutes), so chunk before embedding.
@@ -23,8 +23,8 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 
 ## Roadmap
 
-1. Hold key to record → transcribe locally → print text, plus a model benchmark ← **current step**
-2. Paste the text into whatever app is focused
+1. ~~Hold key to record → transcribe locally → print text, plus a model benchmark~~ (done)
+2. Paste the text into whatever app is focused ← **current step** (built; awaiting user confirmation)
 3. Ollama cleanup pass
 4. Tauri app: small floating "listening" pill, tray icon, history window, start-at-login option
 5. Notes key (Right Alt), auto-categorization, then the Q&A chat window

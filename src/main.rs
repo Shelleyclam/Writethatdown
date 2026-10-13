@@ -1,12 +1,13 @@
-//! Step 1 command-line tool.
+//! Command-line tool.
 //!
-//!   whisperflow                     push-to-talk: hold Right Ctrl, speak, release
+//!   whisperflow                     push-to-talk: hold Right Ctrl, speak, release to paste
 //!   whisperflow bench [clip.wav]    compare every downloaded model on one clip
 //!   whisperflow file <clip.wav>     transcribe a WAV file
 //!
 //! Options:
 //!   --model <name>    e.g. base.en or small.en (default: base.en if present)
 //!   --threads <n>     CPU threads for Whisper (default: up to 8)
+//!   --no-paste        only print the text, don't paste it
 //!   --save-wav        keep each recording in recordings\ (for debugging)
 
 use anyhow::{anyhow, bail, Result};
@@ -14,17 +15,19 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use whisperflow::audio::{Clip, Recorder};
 use whisperflow::hotkey::{self, KeyEvent};
+use whisperflow::paste;
 use whisperflow::transcribe::{available_models, find_model, model_name, Transcriber};
 
 const HELP: &str = "\
 Usage:
-  whisperflow                     push-to-talk: hold Right Ctrl, speak, release
+  whisperflow                     push-to-talk: hold Right Ctrl, speak, release to paste
   whisperflow bench [clip.wav]    compare every downloaded model on one clip
   whisperflow file <clip.wav>     transcribe a WAV file
 
 Options:
   --model <name>    e.g. base.en or small.en (default: base.en if present)
   --threads <n>     CPU threads for Whisper (default: up to 8)
+  --no-paste        only print the text, don't paste it
   --save-wav        keep each recording in recordings\\ (for debugging)";
 
 /// Presses shorter than this are treated as accidental taps.
@@ -39,6 +42,7 @@ struct Options {
     model: Option<String>,
     threads: i32,
     save_wav: bool,
+    paste: bool,
 }
 
 fn parse_args() -> Result<Options> {
@@ -50,6 +54,7 @@ fn parse_args() -> Result<Options> {
         model: None,
         threads: cores.min(8) as i32,
         save_wav: false,
+        paste: true,
     };
     let mut positional = Vec::new();
     while let Some(a) = args.next() {
@@ -62,6 +67,7 @@ fn parse_args() -> Result<Options> {
                     .parse()?
             }
             "--save-wav" => o.save_wav = true,
+            "--no-paste" => o.paste = false,
             "-h" | "--help" => {
                 println!("{HELP}");
                 std::process::exit(0);
@@ -112,8 +118,8 @@ fn load(path: &Path, threads: i32) -> Result<Transcriber> {
     Ok(t)
 }
 
-/// Transcribe and print the text with timing. Returns seconds taken.
-fn report(t: &Transcriber, clip: &Clip) -> Result<f32> {
+/// Transcribe and print the text with timing. Returns the text and seconds taken.
+fn report(t: &Transcriber, clip: &Clip) -> Result<(String, f32)> {
     let started = Instant::now();
     let text = t.transcribe(clip)?;
     let took = started.elapsed().as_secs_f32();
@@ -129,7 +135,7 @@ fn report(t: &Transcriber, clip: &Clip) -> Result<f32> {
         took,
         took / audio.max(0.01)
     );
-    Ok(took)
+    Ok((text, took))
 }
 
 /// Wait for one press-and-release of the push-to-talk key and return the clip.
@@ -182,8 +188,19 @@ fn run(o: &Options) -> Result<()> {
         if o.save_wav {
             save_debug_wav(&clip)?;
         }
-        if let Err(e) = report(&t, &clip) {
-            eprintln!("  {e:#}");
+        let text = match report(&t, &clip) {
+            Ok((text, _)) => text,
+            Err(e) => {
+                eprintln!("  {e:#}");
+                continue;
+            }
+        };
+        if o.paste && !text.is_empty() {
+            let app = paste::foreground_app().unwrap_or_else(|| "unknown app".into());
+            match paste::paste(&text) {
+                Ok(()) => println!("  pasted into {app}"),
+                Err(e) => eprintln!("  Could not paste: {e:#}"),
+            }
         }
     }
 }
@@ -220,7 +237,7 @@ fn bench(o: &Options) -> Result<()> {
         let t = load(path, o.threads)?;
         // The first run warms up caches; time the second.
         t.transcribe(&clip)?;
-        let took = report(&t, &clip)?;
+        let (_, took) = report(&t, &clip)?;
         results.push((t.name.clone(), took / clip.duration_secs()));
     }
 
