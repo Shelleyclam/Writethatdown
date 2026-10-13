@@ -1,3 +1,8 @@
+[workspace]
+# The desktop app shares one target folder with the core crate, so whisper.cpp
+# is only compiled once.
+members = [".", "app/src-tauri"]
+
 [package]
 name = "whisperflow"
 version = "0.1.0"

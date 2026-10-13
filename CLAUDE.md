@@ -26,8 +26,8 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 
 1. ~~Hold key to record → transcribe locally → print text, plus a model benchmark~~ (done)
 2. ~~Paste the text into whatever app is focused~~ (done)
-3. Ollama cleanup pass ← **current step** (built; awaiting user confirmation)
-4. Tauri app: small floating "listening" pill, tray icon, history window, start-at-login option
+3. ~~Ollama cleanup pass~~ (done)
+4. Tauri app: small floating "listening" pill, tray icon, history window, start-at-login option ← **current step** (built; awaiting user confirmation)
 5. Notes key (Right Alt), auto-categorization, then the Q&A chat window
 
 ## Working agreements
@@ -42,5 +42,9 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 - whisper-rs bindings are generated at build time with bindgen; `.cargo/config.toml` sets `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin`. The bundled bindings (`WHISPER_DONT_GENERATE_BINDINGS`) are Linux-generated and do not compile on Windows.
 - `.cargo/config.toml` also sets `CMAKE_C_FLAGS_RELEASE`/`CMAKE_CXX_FLAGS_RELEASE` with `/O2`: the cmake crate otherwise drops optimization and whisper.cpp runs ~6x slower. After changing these, run `cargo clean --release -p whisper-rs-sys` (cargo does not detect the change).
 - Ollama is installed in `D:\Ollama` with `OLLAMA_MODELS=D:\Ollama\models` (user env var). Drive C: is nearly full, so put large installs and downloads on D:.
+- The desktop app is `app/` (Tauri 2 + React + Vite); `app/src-tauri` is a workspace member, so it shares `target/` with the core crate. Build with `npx tauri build --no-bundle` from `app/` (output `target\release\whisperflow-app.exe`). Use release builds: debug builds compile whisper.cpp without the `/O2` fix. Set `npm_config_cache=D:\npm-cache` when running npm (C: is short on space).
+- `src/engine.rs` owns the dictation loop and emits `Event`s; the CLI prints them and the app forwards them to both windows as the `engine` event. Keep new pipeline behaviour in the engine, not in the app or CLI.
+- The pill must never take focus (the paste goes to the focused window): it is `focusable(false)`, click-through, and shown with Win32 `SW_SHOWNOACTIVATE` in `app/src-tauri/src/pill.rs`. Don't switch it to `window.show()`.
+- The keyboard hook ignores injected key events, so push-to-talk can't be tested with simulated keys; the user has to test it.
 - Keep the project at a short path (it lives in `D:\whisperFlow`): MSVC `link.exe` fails with LNK1104 when build paths exceed 260 characters.
 - Models live in `models\` (`scripts\download-models.ps1`); they're git-ignored.

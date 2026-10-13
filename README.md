@@ -2,11 +2,14 @@
 
 A personal, fully local voice dictation app for Windows.
 
-**Step 3 (this version):** hold **Right Ctrl**, speak, release, and the text is
-transcribed on your machine with Whisper, cleaned up by a small local LLM (filler
-words, punctuation, "Tuesday, no wait, Wednesday" corrections), and pasted into
-whatever app has focus. Whatever you had on the clipboard is put back afterwards. There is also a
-benchmark mode to pick the best model for your laptop.
+Hold **Right Ctrl**, speak, release, and the text is transcribed on your machine
+with Whisper, cleaned up by a small local LLM (filler words, punctuation,
+"Tuesday, no wait, Wednesday" corrections), and pasted into whatever app has focus.
+Whatever you had on the clipboard is put back afterwards.
+
+**Step 4 (this version):** a desktop app that lives in the tray, shows a small
+floating pill while you talk, and keeps a 7-day history of what you dictated.
+The command-line tool from steps 1-3 is still there for benchmarks and debugging.
 
 ## One-time setup
 
@@ -91,6 +94,30 @@ Other options:
 | `--save-wav` | Keeps each recording in `recordings\` for debugging |
 | `file <clip.wav>` | Transcribes an existing WAV file |
 
+## Desktop app
+
+Needs Node.js (`winget install OpenJS.NodeJS.LTS`). Build it from the `app` folder:
+
+```powershell
+cd app
+npm install
+npx tauri build --no-bundle
+```
+
+This produces `target\release\whisperflow-app.exe`. Start it, and it sits in the tray:
+
+- **Hold Right Ctrl** anywhere to dictate. A pill at the bottom of the screen shows
+  Listening, then Transcribing, and disappears once the text is pasted.
+- **Click the tray icon** to open the history: copy an entry again, see what Whisper
+  heard before cleanup (Original), or delete it. Entries older than 7 days are removed.
+- **Right-click the tray icon** for Start at login and Quit. Closing the history window
+  keeps the app running.
+
+History is stored in `%APPDATA%\local.whisperflow\whisperflow.db`.
+
+Don't run the app and the command-line tool's push-to-talk at the same time: both
+would paste. The app refuses to start twice.
+
 ## Troubleshooting
 
 - **"only silence, ignored"**: Windows is using the wrong microphone. Set the right
@@ -110,7 +137,11 @@ src/hotkey.rs      Right Ctrl push-to-talk (Windows low-level keyboard hook)
 src/paste.rs       paste into the focused app, saving and restoring the clipboard
 src/cleanup.rs     LLM cleanup pass via Ollama, with checks that fall back to the raw text
 src/transcribe.rs  Whisper model loading and transcription
-src/main.rs        command-line tool (run / bench / file)
+src/storage.rs     SQLite paste history (pruned after 7 days)
+src/engine.rs      the dictation loop: record, transcribe, clean up, paste, save
+src/main.rs        command-line tool (run / bench / file / clean / bench-cleanup)
+app/src-tauri/     desktop app: tray, pill window, history commands (Rust)
+app/src/           desktop app UI: pill and history window (React)
 scripts/           model downloader
 ```
 
@@ -118,6 +149,6 @@ scripts/           model downloader
 
 1. ~~Hold to record, transcribe locally, benchmark~~
 2. ~~Paste the text into whatever app is focused~~
-3. ~~Clean-up pass with a local LLM (Ollama): filler words, punctuation, self-corrections~~ ← you are here
-4. Tauri app: floating "listening" pill, tray icon, history window
+3. ~~Clean-up pass with a local LLM (Ollama): filler words, punctuation, self-corrections~~
+4. ~~Tauri app: floating "listening" pill, tray icon, history window~~ ← you are here
 5. Notes key (Right Alt), auto-categories, and a chat window to ask questions about your notes

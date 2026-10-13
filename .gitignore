@@ -2,3 +2,6 @@
 /models/*.bin
 /models/*.part
 /recordings
+/app/node_modules
+/app/dist
+/app/src-tauri/gen/schemas
