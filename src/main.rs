@@ -5,6 +5,11 @@
 //!   whisperflow file <clip.wav>     transcribe (and clean up) a WAV file
 //!   whisperflow clean <text...>     run the cleanup pass on typed text
 //!   whisperflow bench-cleanup [llm...]  compare cleanup models on test sentences
+//!   whisperflow note <text...>      file a typed note (category + search index)
+//!   whisperflow ask <question...>   ask a question about your notes
+//!   whisperflow reindex             index notes that aren't searchable yet
+//!
+//! Notes use the desktop app's database.
 //!
 //! Options:
 //!   --model <name>    e.g. base.en or small.en (default: base.en if present)
@@ -21,6 +26,10 @@ use whisperflow::audio::{Clip, Recorder};
 use whisperflow::cleanup::{self, Cleaner};
 use whisperflow::engine::{self, Event};
 use whisperflow::hotkey;
+use whisperflow::notes::{split_file_under, NoteTaker};
+use whisperflow::ollama::Ollama;
+use whisperflow::storage::{self, Storage};
+use whisperflow::ask as qa;
 use whisperflow::transcribe::{available_models, find_model, model_name, Transcriber};
 
 const HELP: &str = "\
@@ -30,6 +39,11 @@ Usage:
   whisperflow file <clip.wav>     transcribe (and clean up) a WAV file
   whisperflow clean <text...>     run the cleanup pass on typed text
   whisperflow bench-cleanup [llm...]  compare cleanup models on test sentences
+  whisperflow note <text...>      file a typed note (category + search index)
+  whisperflow ask <question...>   ask a question about your notes
+  whisperflow reindex             index notes that aren't searchable yet
+
+Notes use the desktop app's database.
 
 Options:
   --model <name>    e.g. base.en or small.en (default: base.en if present)
@@ -144,7 +158,14 @@ fn real_main() -> Result<()> {
             Ok(())
         }
         "bench-cleanup" => bench_cleanup(&o),
-        other => bail!("Unknown command '{other}'. Try: run, bench, file, clean, bench-cleanup"),
+        "note" => add_note(&o),
+        "ask" => ask(&o),
+        "reindex" => {
+            let n = NoteTaker::default().index_pending(&Storage::open(&storage::default_path())?)?;
+            println!("Indexed {n} chunk(s).");
+            Ok(())
+        }
+        other => bail!("Unknown command '{other}'. Try: run, bench, file, clean, bench-cleanup, note, ask, reindex"),
     }
 }
 
@@ -219,13 +240,13 @@ fn report(t: &Transcriber, clip: &Clip) -> Result<(String, f32)> {
 fn print_event(event: Event) {
     match event {
         Event::Loading => println!("Loading models..."),
-        Event::Ready { model, llm, microphone } => {
+        Event::Ready { model, llm, microphone, .. } => {
             println!("Whisper: {model}   Cleanup: {}", llm.as_deref().unwrap_or("off"));
             println!("Microphone: {microphone}");
             println!("{}  Ctrl+C to quit.", hotkey::describe());
         }
-        Event::Listening => println!("\n● Listening..."),
-        Event::Transcribing | Event::CleaningUp => {}
+        Event::Listening { .. } => println!("\n● Listening..."),
+        Event::Transcribing { .. } | Event::CleaningUp { .. } | Event::Filing | Event::NotesChanged => {}
         Event::Ignored { reason } => println!("  (ignored: {reason})"),
         Event::Warning { message } => eprintln!("  {message}"),
         Event::Done(d) => {
@@ -253,7 +274,8 @@ fn run(o: &Options) -> Result<()> {
         llm: o.cleanup.then(|| o.llm.clone()),
         paste: o.paste,
         save_wav: o.save_wav,
-        history_db: None,
+        db: None,
+        notes: false,
     };
     engine::run(config, print_event)
 }
@@ -270,11 +292,11 @@ fn bench(o: &Options) -> Result<()> {
         Some(path) => Clip::from_wav(path)?,
         None => {
             let mut rec = Recorder::new()?;
-            let keys = hotkey::listen()?;
+            let keys = hotkey::listen(false)?;
             println!("Microphone: {}", rec.device_name());
             println!("{} Speak for 10-15 seconds, the way you normally would.", hotkey::describe());
             loop {
-                if let Some(c) = engine::next_clip(&mut rec, &keys, &mut print_event)? {
+                if let Some((_, c)) = engine::next_clip(&mut rec, &keys, &mut print_event)? {
                     break c;
                 }
             }
@@ -338,6 +360,57 @@ fn bench_cleanup(o: &Options) -> Result<()> {
     println!("\nSummary (average seconds per sentence):");
     for (name, avg) in &results {
         println!("  {name:<16} {avg:.2}");
+    }
+    Ok(())
+}
+
+fn add_note(o: &Options) -> Result<()> {
+    if o.rest.is_empty() {
+        bail!("Usage: whisperflow note <text...>");
+    }
+    let storage = Storage::open(&storage::default_path())?;
+    let (body, category) = split_file_under(&o.rest.join(" "));
+    let started = Instant::now();
+    let filed = NoteTaker::default().file(&storage, &body, &body, None, category)?;
+    for w in &filed.warnings {
+        eprintln!("  {w}");
+    }
+    println!(
+        "Saved note {} under {} ({:.1}s)",
+        filed.note.id,
+        filed.note.category.as_deref().unwrap_or("no category"),
+        started.elapsed().as_secs_f32()
+    );
+    Ok(())
+}
+
+fn ask(o: &Options) -> Result<()> {
+    if o.rest.is_empty() {
+        bail!("Usage: whisperflow ask <question...>");
+    }
+    let question = o.rest.join(" ");
+    let storage = Storage::open(&storage::default_path())?;
+    let started = Instant::now();
+    let hits = NoteTaker::default().search(&storage, &question, qa::SEARCH_CHUNKS)?;
+    let sources = qa::sources_from_hits(&hits);
+    println!("({} note(s) found in {:.1}s)\n", sources.len(), started.elapsed().as_secs_f32());
+
+    let started = Instant::now();
+    let mut first_token = None;
+    qa::answer(&Ollama::new(None), qa::CHAT_MODEL, &question, &sources, &[], |token| {
+        first_token.get_or_insert_with(|| started.elapsed().as_secs_f32());
+        use std::io::Write;
+        print!("{token}");
+        let _ = std::io::stdout().flush();
+    })?;
+    println!(
+        "\n\n(first words after {:.1}s, done after {:.1}s)",
+        first_token.unwrap_or(0.0),
+        started.elapsed().as_secs_f32()
+    );
+    for s in &sources {
+        let category = s.category.as_deref().unwrap_or("no category");
+        println!("[{}] {} · {category}", s.number, qa::format_date(s.created_at));
     }
     Ok(())
 }

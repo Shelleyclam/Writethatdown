@@ -5,12 +5,9 @@
 //! The raw transcript is always the fallback: if Ollama is down, slow, or the
 //! model returns something implausible, callers keep the raw text.
 
-use anyhow::{anyhow, bail, Result};
-use serde::{Deserialize, Serialize};
+use crate::ollama::{Message, Ollama, Options};
+use anyhow::{bail, Result};
 use std::time::Duration;
-
-/// Ollama's default local address.
-const OLLAMA_URL: &str = "http://127.0.0.1:11434";
 
 /// Default cleanup model. Chosen with `whisperflow bench-cleanup`.
 pub const DEFAULT_MODEL: &str = "qwen2.5:1.5b";
@@ -77,51 +74,20 @@ const FILLERS: &[&str] = &[
     "kind", "of", "and", "the", "a",
 ];
 
-#[derive(Serialize)]
-struct Message<'a> {
-    role: &'a str,
-    content: &'a str,
-}
-
-#[derive(Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<Message<'a>>,
-    stream: bool,
-    keep_alive: &'a str,
-    options: ChatOptions,
-}
-
-#[derive(Serialize)]
-struct ChatOptions {
-    temperature: f32,
-    num_predict: i32,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    message: ResponseMessage,
-}
-
-#[derive(Deserialize)]
-struct ResponseMessage {
-    content: String,
-}
+/// Long notes are cleaned in pieces of about this many words: small models
+/// tend to summarize long input instead of cleaning it.
+const CHUNK_WORDS: usize = 120;
 
 /// A connection to a cleanup model running in Ollama.
 pub struct Cleaner {
-    agent: ureq::Agent,
+    ollama: Ollama,
     pub model: String,
 }
 
 impl Cleaner {
     pub fn new(model: &str) -> Self {
-        let agent = ureq::Agent::config_builder()
-            // Generous, because the first request may have to load the model.
-            .timeout_global(Some(Duration::from_secs(60)))
-            .build()
-            .into();
-        Self { agent, model: model.to_string() }
+        // Generous, because the first request may have to load the model.
+        Self { ollama: Ollama::new(Some(Duration::from_secs(60))), model: model.to_string() }
     }
 
     /// Load the model and process the instructions now, so the first
@@ -150,46 +116,79 @@ impl Cleaner {
         Ok(cleaned)
     }
 
+    /// Clean up text of any length, piece by piece. A piece that fails
+    /// cleanup keeps its raw text, so one bad piece doesn't lose the rest.
+    /// Returns the text and how many pieces fell back to raw.
+    pub fn clean_long(&self, raw: &str) -> (String, usize) {
+        let mut failed = 0;
+        let pieces: Vec<String> = split_sentences_into_chunks(raw, CHUNK_WORDS, false)
+            .iter()
+            .map(|piece| {
+                self.clean(piece).unwrap_or_else(|_| {
+                    failed += 1;
+                    piece.clone()
+                })
+            })
+            .collect();
+        (pieces.join(" "), failed)
+    }
+
     fn complete(&self, raw: &str, max_tokens: i32) -> Result<String> {
-        let wrap = |s: &str| format!("<transcript>\n{s}\n</transcript>");
-        let wrapped: Vec<(String, &str)> = EXAMPLES.iter().map(|(i, o)| (wrap(i), *o)).collect();
-        let input = wrap(raw);
-
-        let mut messages = vec![Message { role: "system", content: SYSTEM_PROMPT }];
-        for (example_in, example_out) in &wrapped {
-            messages.push(Message { role: "user", content: example_in });
-            messages.push(Message { role: "assistant", content: example_out });
+        let wrap = |s: &str| format!("<transcript>
+{s}
+</transcript>");
+        let mut messages = vec![Message::system(SYSTEM_PROMPT)];
+        for (example_in, example_out) in EXAMPLES {
+            messages.push(Message::user(wrap(example_in)));
+            messages.push(Message::assistant(*example_out));
         }
-        messages.push(Message { role: "user", content: &input });
-
-        let request = ChatRequest {
-            model: &self.model,
-            messages,
-            stream: false,
-            keep_alive: KEEP_ALIVE,
-            options: ChatOptions { temperature: 0.0, num_predict: max_tokens },
-        };
-        let response: ChatResponse = self
-            .agent
-            .post(format!("{OLLAMA_URL}/api/chat"))
-            .send_json(&request)
-            .and_then(|mut r| r.body_mut().read_json())
-            .map_err(|e| self.explain(e))?;
-        Ok(response.message.content)
+        messages.push(Message::user(wrap(raw)));
+        let options = Options { temperature: 0.0, max_tokens, keep_alive: KEEP_ALIVE };
+        self.ollama.chat(&self.model, &messages, &options)
     }
+}
 
-    fn explain(&self, e: ureq::Error) -> anyhow::Error {
-        match e {
-            ureq::Error::ConnectionFailed | ureq::Error::Io(_) => {
-                anyhow!("Ollama isn't running. Start Ollama, or use --no-cleanup.")
-            }
-            ureq::Error::StatusCode(404) => {
-                anyhow!("Model {m} isn't downloaded. Run: ollama pull {m}", m = self.model)
-            }
-            ureq::Error::Timeout(_) => anyhow!("Ollama took too long to respond"),
-            other => anyhow!("Ollama request failed: {other}"),
+/// Split text at sentence ends into pieces of roughly `target_words` words.
+/// With `overlap`, each piece also starts with the previous piece's last
+/// sentence, so a thought cut at a boundary still appears whole somewhere.
+pub fn split_sentences_into_chunks(text: &str, target_words: usize, overlap: bool) -> Vec<String> {
+    let mut sentences = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+        if word.ends_with(['.', '!', '?']) {
+            sentences.push(std::mem::take(&mut current));
         }
     }
+    if !current.is_empty() {
+        sentences.push(current);
+    }
+
+    let mut chunks = Vec::new();
+    let mut chunk: Vec<&str> = Vec::new();
+    let mut words = 0;
+    for sentence in &sentences {
+        let n = sentence.split_whitespace().count();
+        if words > 0 && words + n > target_words {
+            chunks.push(chunk.join(" "));
+            let last = *chunk.last().unwrap();
+            chunk.clear();
+            words = 0;
+            if overlap {
+                chunk.push(last);
+                words = last.split_whitespace().count();
+            }
+        }
+        chunk.push(sentence);
+        words += n;
+    }
+    if !chunk.is_empty() {
+        chunks.push(chunk.join(" "));
+    }
+    chunks
 }
 
 /// Strip wrapping the model sometimes adds despite instructions.
@@ -271,6 +270,18 @@ mod tests {
             plausible("we need three things milk eggs and uh bread", "We need 3 things: milk, eggs, and bread."),
             Ok(())
         );
+    }
+
+    #[test]
+    fn chunks_split_at_sentences() {
+        let text = "One two three. Four five six. Seven eight nine. Ten.";
+        assert_eq!(split_sentences_into_chunks(text, 6, false), vec!["One two three. Four five six.", "Seven eight nine. Ten."]);
+        assert_eq!(
+            split_sentences_into_chunks(text, 6, true),
+            vec!["One two three. Four five six.", "Four five six. Seven eight nine.", "Seven eight nine. Ten."]
+        );
+        assert_eq!(split_sentences_into_chunks("no punctuation at all", 2, false), vec!["no punctuation at all"]);
+        assert!(split_sentences_into_chunks("", 10, false).is_empty());
     }
 
     #[test]
