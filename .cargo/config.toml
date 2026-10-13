@@ -1,0 +1,3 @@
+[env]
+# Use the bindings bundled with whisper-rs, so building does not need LLVM/libclang installed.
+WHISPER_DONT_GENERATE_BINDINGS = "1"
