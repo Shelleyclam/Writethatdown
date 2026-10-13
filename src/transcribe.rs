@@ -76,16 +76,17 @@ pub fn model_name(path: &Path) -> String {
     stem.trim_start_matches("ggml-").trim_end_matches(".bin").to_string()
 }
 
-/// Where model files live: a `models` folder next to the program, or in the
-/// current directory (handy when running with `cargo run`).
+/// Where model files live: the nearest `models` folder next to the program
+/// or above it (so `target\release\*.exe` finds the project's `models`
+/// folder however it is started), else `models` in the current directory.
 pub fn models_dir() -> PathBuf {
-    let beside_exe = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("models")));
-    match beside_exe {
-        Some(dir) if dir.is_dir() => dir,
-        _ => PathBuf::from("models"),
-    }
+    let exe = std::env::current_exe().ok();
+    let found = exe
+        .iter()
+        .flat_map(|p| p.ancestors().skip(1))
+        .map(|d| d.join("models"))
+        .find(|d| d.is_dir());
+    found.unwrap_or_else(|| PathBuf::from("models"))
 }
 
 /// All `ggml-*.bin` models found, smallest first.

@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use whisperflow::audio::{Clip, Recorder};
 use whisperflow::cleanup::{self, Cleaner};
-use whisperflow::hotkey::{self, KeyEvent};
-use whisperflow::paste;
+use whisperflow::engine::{self, Event};
+use whisperflow::hotkey;
 use whisperflow::transcribe::{available_models, find_model, model_name, Transcriber};
 
 const HELP: &str = "\
@@ -53,12 +53,6 @@ const CLEANUP_SAMPLES: &[&str] = &[
     "I really like how clean the new layout looks like it's way easier to read",
     "So, basically, I was thinking we could, uh, push the launch to March. Actually, no, let's say April, just to be safe.",
 ];
-
-/// Presses shorter than this are treated as accidental taps.
-const MIN_CLIP_SECS: f32 = 0.3;
-/// Below this loudness the clip is treated as silence (avoids Whisper
-/// "hallucinating" text like "Thank you." from nothing).
-const SILENCE_RMS: f32 = 0.002;
 
 struct Options {
     command: String,
@@ -221,76 +215,47 @@ fn report(t: &Transcriber, clip: &Clip) -> Result<(String, f32)> {
     Ok((text, took))
 }
 
-/// Wait for one press-and-release of the push-to-talk key and return the clip.
-fn record_one(
-    rec: &mut Recorder,
-    keys: &std::sync::mpsc::Receiver<KeyEvent>,
-) -> Result<Option<Clip>> {
-    loop {
-        match keys.recv()? {
-            KeyEvent::Down if !rec.is_recording() => {
-                rec.start()?;
-                println!("\n● Listening...");
+/// Print engine progress the way the step 1-3 tool did.
+fn print_event(event: Event) {
+    match event {
+        Event::Loading => println!("Loading models..."),
+        Event::Ready { model, llm, microphone } => {
+            println!("Whisper: {model}   Cleanup: {}", llm.as_deref().unwrap_or("off"));
+            println!("Microphone: {microphone}");
+            println!("{}  Ctrl+C to quit.", hotkey::describe());
+        }
+        Event::Listening => println!("\n● Listening..."),
+        Event::Transcribing | Event::CleaningUp => {}
+        Event::Ignored { reason } => println!("  (ignored: {reason})"),
+        Event::Warning { message } => eprintln!("  {message}"),
+        Event::Done(d) => {
+            println!("  \"{}\"", d.raw_text);
+            println!(
+                "  {:.1}s of audio -> {:.2}s to transcribe  (speed factor {:.2})",
+                d.audio_secs,
+                d.transcribe_secs,
+                d.transcribe_secs / d.audio_secs.max(0.01)
+            );
+            if let Some(secs) = d.cleanup_secs {
+                println!("  -> \"{}\"  ({secs:.2}s cleanup)", d.cleaned_text);
             }
-            KeyEvent::Up if rec.is_recording() => {
-                let clip = rec.stop();
-                if clip.duration_secs() < MIN_CLIP_SECS {
-                    println!("  (too short, ignored)");
-                    return Ok(None);
-                }
-                if clip.rms() < SILENCE_RMS {
-                    println!("  (only silence, ignored. Is the right microphone selected?)");
-                    return Ok(None);
-                }
-                return Ok(Some(clip));
+            if d.pasted {
+                println!("  pasted into {}", d.source_app.as_deref().unwrap_or("unknown app"));
             }
-            _ => {}
         }
     }
-}
-
-fn save_debug_wav(clip: &Clip) -> Result<()> {
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs();
-    let path = PathBuf::from("recordings").join(format!("clip-{stamp}.wav"));
-    clip.save_wav(&path)?;
-    println!("  saved {}", path.display());
-    Ok(())
 }
 
 fn run(o: &Options) -> Result<()> {
-    let t = load(&find_model(o.model.as_deref())?, o.threads)?;
-    let mut rec = Recorder::new()?;
-    let cleaner = start_cleaner(o);
-    let keys = hotkey::listen()?;
-    println!("Microphone: {}", rec.device_name());
-    println!("{}  Ctrl+C to quit.", hotkey::describe());
-
-    loop {
-        let Some(clip) = record_one(&mut rec, &keys)? else { continue };
-        if o.save_wav {
-            save_debug_wav(&clip)?;
-        }
-        let raw = match report(&t, &clip) {
-            Ok((text, _)) => text,
-            Err(e) => {
-                eprintln!("  {e:#}");
-                continue;
-            }
-        };
-        let text = match &cleaner {
-            Some(c) if !raw.is_empty() => clean_and_report(c, &raw),
-            _ => raw,
-        };
-        if o.paste && !text.is_empty() {
-            let app = paste::foreground_app().unwrap_or_else(|| "unknown app".into());
-            match paste::paste(&text) {
-                Ok(()) => println!("  pasted into {app}"),
-                Err(e) => eprintln!("  Could not paste: {e:#}"),
-            }
-        }
-    }
+    let config = engine::Config {
+        model: o.model.clone(),
+        threads: o.threads,
+        llm: o.cleanup.then(|| o.llm.clone()),
+        paste: o.paste,
+        save_wav: o.save_wav,
+        history_db: None,
+    };
+    engine::run(config, print_event)
 }
 
 fn bench(o: &Options) -> Result<()> {
@@ -309,14 +274,14 @@ fn bench(o: &Options) -> Result<()> {
             println!("Microphone: {}", rec.device_name());
             println!("{} Speak for 10-15 seconds, the way you normally would.", hotkey::describe());
             loop {
-                if let Some(c) = record_one(&mut rec, &keys)? {
+                if let Some(c) = engine::next_clip(&mut rec, &keys, &mut print_event)? {
                     break c;
                 }
             }
         }
     };
     if o.save_wav {
-        save_debug_wav(&clip)?;
+        println!("  saved {}", engine::save_debug_wav(&clip)?.display());
     }
 
     let mut results = Vec::new();
