@@ -2,9 +2,10 @@
 
 A personal, fully local voice dictation app for Windows.
 
-**Step 2 (this version):** hold **Right Ctrl**, speak, release, and the text is
-transcribed on your machine with Whisper and pasted into whatever app has focus.
-Whatever you had on the clipboard is put back afterwards. There is also a
+**Step 3 (this version):** hold **Right Ctrl**, speak, release, and the text is
+transcribed on your machine with Whisper, cleaned up by a small local LLM (filler
+words, punctuation, "Tuesday, no wait, Wednesday" corrections), and pasted into
+whatever app has focus. Whatever you had on the clipboard is put back afterwards. There is also a
 benchmark mode to pick the best model for your laptop.
 
 ## One-time setup
@@ -24,6 +25,23 @@ Close and reopen PowerShell afterwards so the new tools are on your PATH, then c
 cargo --version
 cmake --version
 ```
+
+## Ollama (for the cleanup pass)
+
+Install Ollama on D: and keep its models there too (C: is short on space):
+
+```powershell
+winget install Ollama.Ollama --location D:\Ollama
+[Environment]::SetEnvironmentVariable('OLLAMA_MODELS', 'D:\Ollama\models', 'User')
+```
+
+Then, in a new PowerShell window:
+
+```powershell
+ollama pull qwen2.5:1.5b
+```
+
+If Ollama isn't running, whisperflow says so at startup and pastes the raw transcript.
 
 ## Get the models
 
@@ -65,6 +83,10 @@ Other options:
 |---|---|
 | `--model <name>` | `base.en` or `small.en` (default: `base.en` if downloaded) |
 | `--threads <n>` | CPU threads for Whisper (default 8). Worth trying 4, 6 and 12 in `bench`. |
+| `--llm <name>` | Ollama model for cleanup (default `qwen2.5:1.5b`) |
+| `--no-cleanup` | Paste the raw Whisper transcript, skip the LLM |
+| `clean <text>` | Run the cleanup pass on typed text |
+| `bench-cleanup [models]` | Compare cleanup models on built-in test sentences |
 | `--no-paste` | Only print the text in the terminal, don't paste it |
 | `--save-wav` | Keeps each recording in `recordings\` for debugging |
 | `file <clip.wav>` | Transcribes an existing WAV file |
@@ -86,6 +108,7 @@ Other options:
 src/audio.rs       microphone capture, conversion to 16 kHz mono
 src/hotkey.rs      Right Ctrl push-to-talk (Windows low-level keyboard hook)
 src/paste.rs       paste into the focused app, saving and restoring the clipboard
+src/cleanup.rs     LLM cleanup pass via Ollama, with checks that fall back to the raw text
 src/transcribe.rs  Whisper model loading and transcription
 src/main.rs        command-line tool (run / bench / file)
 scripts/           model downloader
@@ -94,7 +117,7 @@ scripts/           model downloader
 ## Roadmap
 
 1. ~~Hold to record, transcribe locally, benchmark~~
-2. ~~Paste the text into whatever app is focused~~ ← you are here
-3. Clean-up pass with a local LLM (Ollama): filler words, punctuation, self-corrections
+2. ~~Paste the text into whatever app is focused~~
+3. ~~Clean-up pass with a local LLM (Ollama): filler words, punctuation, self-corrections~~ ← you are here
 4. Tauri app: floating "listening" pill, tray icon, history window
 5. Notes key (Right Alt), auto-categories, and a chat window to ask questions about your notes

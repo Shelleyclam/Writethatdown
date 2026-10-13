@@ -9,6 +9,7 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 - **Stack:** Rust core library (this crate), later wrapped in a Tauri + React desktop app.
 - **Speech-to-text:** whisper.cpp via the `whisper-rs` crate, English-only models (`base.en` / `small.en`). Default model is **base.en**: the step 1 benchmark on real dictation gave a speed factor of ~0.10 for base.en vs ~0.36 for small.en (8 threads), with near-identical accuracy. small.en stays available via `--model small.en`.
 - **Cleanup LLM (step 3):** Ollama with a small local model (~1.5–3B, e.g. Qwen 2.5) to remove filler words, fix punctuation, and resolve self-corrections ("Tuesday, no wait, Wednesday" → "Wednesday").
+  - Default cleanup model is **qwen2.5:1.5b** (~1.2 s per sentence vs ~2.3 s for qwen2.5:3b; neither was clearly more accurate on `bench-cleanup`). `src/cleanup.rs` checks every output (`plausible`): output words must come from the transcript (catches the model answering/obeying the text) and most non-filler words must survive (catches summarizing); on failure the raw transcript is pasted. Few-shot examples are written in Whisper's punctuated style, which matters.
 - **Q&A chat (step 5):** a 7B model via Ollama is fine; speed matters less there.
 - **Push-to-talk:** low-level keyboard hook (needs key-down and key-up).
   - Hold **Right Ctrl** = dictate and paste into the focused app. Kept in short-term history only.
@@ -24,8 +25,8 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 ## Roadmap
 
 1. ~~Hold key to record → transcribe locally → print text, plus a model benchmark~~ (done)
-2. Paste the text into whatever app is focused ← **current step** (built; awaiting user confirmation)
-3. Ollama cleanup pass
+2. ~~Paste the text into whatever app is focused~~ (done)
+3. Ollama cleanup pass ← **current step** (built; awaiting user confirmation)
 4. Tauri app: small floating "listening" pill, tray icon, history window, start-at-login option
 5. Notes key (Right Alt), auto-categorization, then the Q&A chat window
 
@@ -40,5 +41,6 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 - Needs Rust (MSVC toolchain), CMake, MSVC C++ build tools, and LLVM (for libclang). See README.md.
 - whisper-rs bindings are generated at build time with bindgen; `.cargo/config.toml` sets `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin`. The bundled bindings (`WHISPER_DONT_GENERATE_BINDINGS`) are Linux-generated and do not compile on Windows.
 - `.cargo/config.toml` also sets `CMAKE_C_FLAGS_RELEASE`/`CMAKE_CXX_FLAGS_RELEASE` with `/O2`: the cmake crate otherwise drops optimization and whisper.cpp runs ~6x slower. After changing these, run `cargo clean --release -p whisper-rs-sys` (cargo does not detect the change).
+- Ollama is installed in `D:\Ollama` with `OLLAMA_MODELS=D:\Ollama\models` (user env var). Drive C: is nearly full, so put large installs and downloads on D:.
 - Keep the project at a short path (it lives in `D:\whisperFlow`): MSVC `link.exe` fails with LNK1104 when build paths exceed 260 characters.
 - Models live in `models\` (`scripts\download-models.ps1`); they're git-ignored.
