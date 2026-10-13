@@ -2,3 +2,9 @@
 # whisper-rs generates its C bindings at build time with bindgen, which needs
 # libclang. Point it at the standard LLVM install (winget install LLVM.LLVM).
 LIBCLANG_PATH = "C:\\Program Files\\LLVM\\bin"
+
+# The cmake crate replaces CMake's default Release flags with its own list,
+# which has no /O2, so on MSVC whisper.cpp would compile unoptimized (~8x
+# slower). whisper-rs-sys passes CMAKE_* env vars to CMake, so restore them.
+CMAKE_C_FLAGS_RELEASE = "-nologo -MD -Brepro -W0 /O2 /Ob2 /DNDEBUG"
+CMAKE_CXX_FLAGS_RELEASE = "/utf-8 -nologo -MD -Brepro -W0 /O2 /Ob2 /DNDEBUG"
