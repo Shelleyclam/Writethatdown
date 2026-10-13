@@ -5,7 +5,7 @@
 //!   whisperflow file <clip.wav>     transcribe a WAV file
 //!
 //! Options:
-//!   --model <name>    e.g. base.en or small.en (default: small.en if present)
+//!   --model <name>    e.g. base.en or small.en (default: base.en if present)
 //!   --threads <n>     CPU threads for Whisper (default: up to 8)
 //!   --save-wav        keep each recording in recordings\ (for debugging)
 
@@ -23,7 +23,7 @@ Usage:
   whisperflow file <clip.wav>     transcribe a WAV file
 
 Options:
-  --model <name>    e.g. base.en or small.en (default: small.en if present)
+  --model <name>    e.g. base.en or small.en (default: base.en if present)
   --threads <n>     CPU threads for Whisper (default: up to 8)
   --save-wav        keep each recording in recordings\\ (for debugging)";
 

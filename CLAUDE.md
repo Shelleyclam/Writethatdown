@@ -7,7 +7,7 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 - **Platform:** Windows only, personal use. Everything free and local: no paid APIs, no cloud.
 - **Hardware:** Intel i5-12500H (12 cores / 16 threads), 16 GB RAM, Intel Iris Xe (no NVIDIA). Models run on the CPU.
 - **Stack:** Rust core library (this crate), later wrapped in a Tauri + React desktop app.
-- **Speech-to-text:** whisper.cpp via the `whisper-rs` crate, English-only models (`base.en` / `small.en`). The default model is chosen by the step 1 benchmark.
+- **Speech-to-text:** whisper.cpp via the `whisper-rs` crate, English-only models (`base.en` / `small.en`). Default model is **base.en**: the step 1 benchmark on real dictation gave a speed factor of ~0.10 for base.en vs ~0.36 for small.en (8 threads), with near-identical accuracy. small.en stays available via `--model small.en`.
 - **Cleanup LLM (step 3):** Ollama with a small local model (~1.5–3B, e.g. Qwen 2.5) to remove filler words, fix punctuation, and resolve self-corrections ("Tuesday, no wait, Wednesday" → "Wednesday").
 - **Q&A chat (step 5):** a 7B model via Ollama is fine; speed matters less there.
 - **Push-to-talk:** low-level keyboard hook (needs key-down and key-up).

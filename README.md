@@ -62,7 +62,7 @@ Other options:
 
 | Option | What it does |
 |---|---|
-| `--model <name>` | `base.en` or `small.en` (default: `small.en` if downloaded) |
+| `--model <name>` | `base.en` or `small.en` (default: `base.en` if downloaded) |
 | `--threads <n>` | CPU threads for Whisper (default 8). Worth trying 4, 6 and 12 in `bench`. |
 | `--save-wav` | Keeps each recording in `recordings\` for debugging |
 | `file <clip.wav>` | Transcribes an existing WAV file |

@@ -106,7 +106,7 @@ pub fn available_models() -> Vec<PathBuf> {
 }
 
 /// Resolve a model by short name ("small.en") or file path. With no name,
-/// prefer small.en, then base.en, then whatever is there.
+/// prefer base.en (the step 1 benchmark winner), then small.en, then whatever is there.
 pub fn find_model(name: Option<&str>) -> Result<PathBuf> {
     if let Some(n) = name {
         let as_path = PathBuf::from(n);
@@ -121,7 +121,7 @@ pub fn find_model(name: Option<&str>) -> Result<PathBuf> {
         };
     }
     let all = available_models();
-    for preferred in ["small.en", "base.en"] {
+    for preferred in ["base.en", "small.en"] {
         if let Some(p) = all.iter().find(|p| model_name(p) == preferred) {
             return Ok(p.clone());
         }
