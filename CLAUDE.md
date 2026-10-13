@@ -37,6 +37,7 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 
 ## Build notes
 
-- Needs Rust (MSVC toolchain), CMake, and MSVC C++ build tools. See README.md.
-- `.cargo/config.toml` sets `WHISPER_DONT_GENERATE_BINDINGS=1`, so LLVM/libclang is not required.
+- Needs Rust (MSVC toolchain), CMake, MSVC C++ build tools, and LLVM (for libclang). See README.md.
+- whisper-rs bindings are generated at build time with bindgen; `.cargo/config.toml` sets `LIBCLANG_PATH` to `C:\Program Files\LLVM\bin`. The bundled bindings (`WHISPER_DONT_GENERATE_BINDINGS`) are Linux-generated and do not compile on Windows.
+- Keep the project at a short path (it lives in `D:\whisperFlow`): MSVC `link.exe` fails with LNK1104 when build paths exceed 260 characters.
 - Models live in `models\` (`scripts\download-models.ps1`); they're git-ignored.

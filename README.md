@@ -13,6 +13,7 @@ Open **PowerShell** and install the build tools:
 ```powershell
 winget install Rustlang.Rustup
 winget install Kitware.CMake
+winget install LLVM.LLVM
 winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 ```
 

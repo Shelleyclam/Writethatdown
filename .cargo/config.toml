@@ -1,3 +1,4 @@
 [env]
-# Use the bindings bundled with whisper-rs, so building does not need LLVM/libclang installed.
-WHISPER_DONT_GENERATE_BINDINGS = "1"
+# whisper-rs generates its C bindings at build time with bindgen, which needs
+# libclang. Point it at the standard LLVM install (winget install LLVM.LLVM).
+LIBCLANG_PATH = "C:\\Program Files\\LLVM\\bin"
