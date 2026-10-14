@@ -10,6 +10,10 @@ use serde::Serialize;
 
 /// Speed matters less here than for cleanup, so a 7B model is fine.
 pub const CHAT_MODEL: &str = "qwen2.5:7b";
+/// How long the 7B model stays loaded after use. It needs ~5 GB, and RAM is
+/// shared with a browser that is always open, so give it back soon; a burst
+/// of notes or follow-up questions still finds it loaded.
+pub const CHAT_KEEP_ALIVE: &str = "2m";
 /// How many chunks to retrieve, and at most how many notes to show the model.
 /// Every extra note costs prompt-reading time on a CPU.
 pub const SEARCH_CHUNKS: usize = 8;
@@ -103,7 +107,7 @@ pub fn answer(
     };
     messages.push(Message::user(format!("Notes:\n\n{notes}\n\nQuestion: {question}")));
 
-    let options = Options { temperature: 0.2, max_tokens: 400, keep_alive: "15m" };
+    let options = Options { temperature: 0.2, max_tokens: 400, keep_alive: CHAT_KEEP_ALIVE };
     ollama.chat_stream(model, &messages, &options, on_token)
 }
 

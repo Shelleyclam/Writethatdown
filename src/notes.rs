@@ -173,7 +173,7 @@ to hold similar notes later (for example Work, Health, Family, Groceries, App Id
             Message::assistant(example_reply),
             Message::user(format!("<existing>{list}</existing>\n<note>\n{excerpt}\n</note>")),
         ];
-        let options = Options { temperature: 0.0, max_tokens: 24, keep_alive: "10m" };
+        let options = Options { temperature: 0.0, max_tokens: 24, keep_alive: crate::ask::CHAT_KEEP_ALIVE };
         let reply = self.ollama.chat(&self.category_model, &messages, &options)?;
         pick_category(&reply, existing)
     }
