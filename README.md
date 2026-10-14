@@ -174,4 +174,5 @@ scripts/           model downloader
 2. ~~Paste the text into whatever app is focused~~
 3. ~~Clean-up pass with a local LLM (Ollama): filler words, punctuation, self-corrections~~
 4. ~~Tauri app: floating "listening" pill, tray icon, history window~~
-5. ~~Notes key (Right Alt), auto-categories, and a chat window to ask questions about your notes~~ ← you are here
+5. ~~Notes key (Right Alt), auto-categories, and a chat window to ask questions about your notes~~
+6. Hands-free mode: tap the key once to start, tap again to stop ← you are here

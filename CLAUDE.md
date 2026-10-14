@@ -29,7 +29,8 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 2. ~~Paste the text into whatever app is focused~~ (done)
 3. ~~Ollama cleanup pass~~ (done)
 4. ~~Tauri app: small floating "listening" pill, tray icon, history window, start-at-login option~~ (done)
-5. Notes key (Right Alt), auto-categorization, then the Q&A chat window ← **current step** (built; awaiting user confirmation)
+5. ~~Notes key (Right Alt), auto-categorization, then the Q&A chat window~~ (done)
+6. Hands-free mode: a quick lone tap of Right Ctrl / Right Alt starts recording and another tap stops it; holding still works as push-to-talk. Esc cancels, auto-stop after 10 minutes. ← **current step**
 
 ## Working agreements
 
