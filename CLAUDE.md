@@ -1,6 +1,8 @@
-# whisperflow
+# Writethatdown (internally: whisperflow)
 
 A personal, fully local Wispr Flow–style voice dictation app for Windows.
+
+The user-facing name is **Writethatdown** (README, window title, tray, Windows product name). Internal names stay `whisperflow`: the crates, the exe files (`whisperflow.exe`, `whisperflow-app.exe`), the Tauri identifier and data folder (`local.whisperflow`), `WHISPERFLOW_DB`, and the Start at login registry entry (pinned via `AUTOSTART_NAME` so existing entries keep working). Don't rename those without migrating the user's data and autostart entry.
 
 ## Decisions (already made; don't revisit unless something is blocked)
 

@@ -1,4 +1,4 @@
-# whisperflow
+# Writethatdown
 
 A fully local voice dictation app for Windows, in the spirit of Wispr Flow.
 Speech recognition and every language model run on your own machine, on the CPU:
@@ -92,7 +92,7 @@ npx tauri build --no-bundle
 ```
 
 The first build compiles whisper.cpp and takes a few minutes. Keep the project at a
-short path (like `C:\code\whisperflow`): the MSVC linker fails on paths longer than
+short path (like `C:\code\writethatdown`): the MSVC linker fails on paths longer than
 260 characters.
 
 ## Using the app
@@ -105,7 +105,7 @@ Run `target\release\whisperflow-app.exe`. It sits in the tray.
   you tap it again. **Esc** cancels, and a forgotten recording stops after 10 minutes.
   Using Right Ctrl in a shortcut (like Ctrl+C) never starts a recording.
 - **Hold or tap Right Alt** to dictate a note. The pill shows "Filing note", then where
-  it was saved. While whisperflow runs, Right Alt doesn't reach other apps, so it can't
+  it was saved. While Writethatdown runs, Right Alt doesn't reach other apps, so it can't
   be used as AltGr.
 - **History tab:** copy an entry again, see what Whisper heard before cleanup, save it as
   a note, or delete it. Entries older than 7 days are removed.
@@ -117,7 +117,8 @@ Run `target\release\whisperflow-app.exe`. It sits in the tray.
   app running.
 
 Everything is stored in `%APPDATA%\local.whisperflow\whisperflow.db`. Audio is never
-saved.
+saved. (Internally the project is still called `whisperflow`: the crates, the executables
+and the data folder use that name.)
 
 ## Command-line tool
 
@@ -151,9 +152,9 @@ Don't run the app and the command-line push-to-talk at the same time: both would
 ## Troubleshooting
 
 - **"only silence, ignored"**: Windows is using the wrong microphone. Pick the right one
-  under Settings → System → Sound → Input, then restart whisperflow.
+  under Settings → System → Sound → Input, then restart Writethatdown.
 - **Nothing is pasted into one particular app**: Windows blocks simulated keystrokes into
-  apps running as administrator. Run whisperflow as administrator too.
+  apps running as administrator. Run Writethatdown as administrator too.
 - **The first word gets cut off**: start speaking a beat after pressing the key. The
   microphone takes a moment to open.
 - **Notes or questions fail with out-of-memory errors**: the 7B model needs about 5 GB of

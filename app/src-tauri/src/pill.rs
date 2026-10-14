@@ -21,7 +21,7 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::default())
-        .title("whisperflow pill")
+        .title("Writethatdown pill")
         .inner_size(WIDTH, HEIGHT)
         .decorations(false)
         .transparent(true)

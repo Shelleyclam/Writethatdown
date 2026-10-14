@@ -1,4 +1,4 @@
-//! whisperflow desktop app: tray icon, floating "listening" pill, and the
+//! Writethatdown desktop app (crate `whisperflow-app`): tray icon, floating "listening" pill, and the
 //! main window (history, notes, ask), around the dictation engine from the
 //! core crate.
 
@@ -15,12 +15,16 @@ use std::time::Duration;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_autostart::ManagerExt;
 use whisperflow::engine::{self, Event, Mode};
 use whisperflow::{cleanup, storage};
 
 /// Passed by the "start at login" entry, so the app starts quietly in the tray.
 const AUTOSTART_ARG: &str = "--minimized";
+/// Name of the "start at login" registry entry. Fixed (it predates the
+/// Writethatdown name) so existing entries keep working.
+const AUTOSTART_NAME: &str = "whisperflow";
+const APP_NAME: &str = "Writethatdown";
 const MAIN_WINDOW: &str = "main";
 
 /// What the main window shows in its status line.
@@ -45,7 +49,12 @@ fn main() {
     tauri::Builder::default()
         // A second copy would install a second keyboard hook and paste twice.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![AUTOSTART_ARG])))
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name(AUTOSTART_NAME)
+                .args([AUTOSTART_ARG])
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             get_status,
             commands::get_history,
@@ -71,7 +80,7 @@ fn main() {
             pill::create(app.handle())?;
             let started_at_login = std::env::args().any(|a| a == AUTOSTART_ARG);
             WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::default())
-                .title("whisperflow")
+                .title(APP_NAME)
                 .inner_size(780.0, 720.0)
                 .min_inner_size(520.0, 420.0)
                 .visible(!started_at_login)
@@ -90,7 +99,7 @@ fn main() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("failed to start whisperflow")
+        .expect("failed to start Writethatdown")
         .run(|_app, event| {
             // Keep running with no windows open; only "Quit" (which passes
             // an exit code) ends the app.
@@ -109,10 +118,10 @@ fn show_main(app: &AppHandle) {
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open whisperflow", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", &format!("Open {APP_NAME}"), true, None::<&str>)?;
     let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart = CheckMenuItem::with_id(app, "autostart", "Start at login", true, autostart_on, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit whisperflow", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", &format!("Quit {APP_NAME}"), true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[&open, &PredefinedMenuItem::separator(app)?, &autostart, &PredefinedMenuItem::separator(app)?, &quit],
@@ -120,7 +129,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().expect("app icon"))
-        .tooltip("whisperflow: loading")
+        .tooltip(format!("{APP_NAME}: loading"))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id().as_ref() {
@@ -149,7 +158,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 fn set_status(app: &AppHandle, state: &'static str, detail: String) {
     let status = Status { state, detail };
     if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_tooltip(Some(format!("whisperflow: {}", status.detail)));
+        let _ = tray.set_tooltip(Some(format!("{APP_NAME}: {}", status.detail)));
     }
     *app.state::<AppState>().status.lock().unwrap() = status.clone();
     let _ = app.emit("status", status);
