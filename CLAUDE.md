@@ -30,7 +30,9 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 3. ~~Ollama cleanup pass~~ (done)
 4. ~~Tauri app: small floating "listening" pill, tray icon, history window, start-at-login option~~ (done)
 5. ~~Notes key (Right Alt), auto-categorization, then the Q&A chat window~~ (done)
-6. Hands-free mode: a quick lone tap of Right Ctrl / Right Alt starts recording and another tap stops it; holding still works as push-to-talk. Esc cancels, auto-stop after 10 minutes. ← **current step**
+6. ~~Hands-free mode: a quick lone tap of Right Ctrl / Right Alt starts recording and another tap stops it; holding still works as push-to-talk. Esc cancels, auto-stop after 10 minutes.~~ (done)
+
+All planned steps are done. Known open item: the first word can be cut off because the mic only opens on key-down (fix would be keeping the mic open with a short pre-roll buffer, at the cost of Windows showing the mic as in use).
 
 ## Working agreements
 
@@ -47,6 +49,7 @@ A personal, fully local Wispr Flow–style voice dictation app for Windows.
 - The desktop app is `app/` (Tauri 2 + React + Vite); `app/src-tauri` is a workspace member, so it shares `target/` with the core crate. Build with `npx tauri build --no-bundle` from `app/` (output `target\release\whisperflow-app.exe`). Use release builds: debug builds compile whisper.cpp without the `/O2` fix. Set `npm_config_cache=D:\npm-cache` when running npm (C: is short on space).
 - `src/engine.rs` owns the dictation loop and emits `Event`s; the CLI prints them and the app forwards them to both windows as the `engine` event. Keep new pipeline behaviour in the engine, not in the app or CLI.
 - The pill must never take focus (the paste goes to the focused window): it is `focusable(false)`, click-through, and shown with Win32 `SW_SHOWNOACTIVATE` in `app/src-tauri/src/pill.rs`. Don't switch it to `window.show()`.
+- Key handling: the hook reports each release as `Press::Tap` (< `TAP_MS` = 300 ms, no other key), `Hold`, or `Combo`; the `Trigger` state machine in `src/engine.rs` turns that into start / hands-free / finish / discard and is unit-tested. Esc is only swallowed while recording (`hotkey::set_recording`).
 - The keyboard hook ignores injected key events, so push-to-talk can't be tested with simulated keys; the user has to test it.
 - Notes: `src/notes.rs` (file-under parsing, categorizing, chunking, indexing), `src/ask.rs` (RAG answer with [n] citations), `src/ollama.rs` (shared client). Storage tables: `notes`, `categories`, `note_chunks`, and the sqlite-vec table `chunk_vectors` (rowid = chunk id, cosine). Notes saved while Ollama is down are indexed later (`index_pending`, run at engine start and before each question).
 - `WHISPERFLOW_DB` overrides the database path (app and CLI); use a scratch DB for testing, never the user's real one. CLI: `note`, `ask`, `reindex`, and `--notes` for Right Alt in push-to-talk.
