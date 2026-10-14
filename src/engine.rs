@@ -4,20 +4,25 @@
 //! - Right Alt (when notes are on): record → transcribe → clean up → file as
 //!   a note (category + search index). Nothing is pasted.
 //!
+//! Either key works two ways: hold it to talk (push-to-talk), or tap it once
+//! to start hands-free recording and tap it again to stop. Esc cancels a
+//! recording; hands-free recordings stop by themselves after
+//! [`MAX_RECORDING`].
+//!
 //! [`run`] blocks and reports progress as [`Event`]s, which the CLI prints
 //! and the app turns into the floating pill and window updates.
 
 use crate::audio::{Clip, Recorder};
 use crate::cleanup::Cleaner;
-use crate::hotkey::{self, Key, KeyEvent};
+use crate::hotkey::{self, Key, KeyEvent, Press};
 use crate::notes::{split_file_under, NoteTaker};
 use crate::paste;
 use crate::storage::Storage;
 use crate::transcribe::{find_model, Transcriber};
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde::Serialize;
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 /// Presses shorter than this are treated as accidental taps.
@@ -27,6 +32,8 @@ const MIN_CLIP_SECS: f32 = 0.3;
 const SILENCE_RMS: f32 = 0.002;
 /// How often old history is pruned while running.
 const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
+/// A forgotten hands-free recording stops (and is transcribed) after this.
+pub const MAX_RECORDING: Duration = Duration::from_secs(10 * 60);
 
 pub struct Config {
     /// Whisper model name or path; `None` picks the default.
@@ -57,13 +64,15 @@ pub enum Event {
     /// Models are loading.
     Loading,
     Ready { model: String, llm: Option<String>, microphone: String, notes: bool },
-    /// A key is down and the mic is recording.
-    Listening { mode: Mode },
+    /// The mic is recording. `hands_free` is false while the key is held,
+    /// and true after a tap (another tap stops it).
+    Listening { mode: Mode, hands_free: bool },
     Transcribing { mode: Mode },
     CleaningUp { mode: Mode },
     /// Choosing a category and indexing a note.
     Filing,
-    /// The clip was dropped (too short, or silence).
+    /// The recording was dropped (too short, silence, cancelled, or the key
+    /// was part of a shortcut).
     Ignored { reason: String },
     /// Something went wrong but dictation continues (e.g. cleanup or paste failed).
     Warning { message: String },
@@ -242,24 +251,45 @@ pub fn run(config: Config, mut emit: impl FnMut(Event)) -> Result<()> {
     }
 }
 
-/// Wait for one press-and-release of a push-to-talk key and return the
-/// recording with the mode it was made in, or `None` if it was too short or
-/// silent. While one key is recording, the other key is ignored.
+/// Wait for one recording (held, or tapped on and off) and return it with
+/// the mode it was made in, or `None` if it was cancelled, part of a
+/// shortcut, too short, or silent.
 pub fn next_clip(
     rec: &mut Recorder,
     keys: &Receiver<KeyEvent>,
     emit: &mut impl FnMut(Event),
 ) -> Result<Option<(Mode, Clip)>> {
-    let mut held: Option<Key> = None;
+    let mut trigger = Trigger::default();
+    let mut started = Instant::now();
     loop {
-        match keys.recv()? {
-            KeyEvent::Down(key) if held.is_none() => {
-                rec.start()?;
-                held = Some(key);
-                emit(Event::Listening { mode: mode_of(key) });
+        // Wake up regularly to enforce the time limit.
+        let step = match keys.recv_timeout(Duration::from_millis(500)) {
+            Ok(event) => trigger.on_key(event),
+            Err(RecvTimeoutError::Timeout) if trigger.is_active() && started.elapsed() > MAX_RECORDING => {
+                emit(Event::Warning { message: "Recording stopped after 10 minutes".into() });
+                trigger.finish()
             }
-            KeyEvent::Up(key) if held == Some(key) => {
+            Err(RecvTimeoutError::Timeout) => Step::Nothing,
+            Err(RecvTimeoutError::Disconnected) => bail!("The keyboard hook stopped"),
+        };
+        match step {
+            Step::Nothing => {}
+            Step::Start(mode) => {
+                rec.start()?;
+                hotkey::set_recording(true);
+                started = Instant::now();
+                emit(Event::Listening { mode, hands_free: false });
+            }
+            Step::HandsFree(mode) => emit(Event::Listening { mode, hands_free: true }),
+            Step::Discard(reason) => {
+                rec.stop();
+                hotkey::set_recording(false);
+                emit(Event::Ignored { reason: reason.into() });
+                return Ok(None);
+            }
+            Step::Finish(mode) => {
                 let clip = rec.stop();
+                hotkey::set_recording(false);
                 if clip.duration_secs() < MIN_CLIP_SECS {
                     emit(Event::Ignored { reason: "too short".into() });
                     return Ok(None);
@@ -270,9 +300,79 @@ pub fn next_clip(
                     });
                     return Ok(None);
                 }
-                return Ok(Some((mode_of(key), clip)));
+                return Ok(Some((mode, clip)));
             }
-            _ => {}
+        }
+    }
+}
+
+/// What to do with the microphone after a key event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Nothing,
+    /// Start recording.
+    Start(Mode),
+    /// Keep recording after the key is released (it was tapped).
+    HandsFree(Mode),
+    /// Stop and transcribe.
+    Finish(Mode),
+    /// Stop and throw the recording away.
+    Discard(&'static str),
+}
+
+/// Turns key events into recording steps. Kept free of audio and timing so
+/// it can be tested; the keyboard hook can't be driven with simulated keys.
+#[derive(Default)]
+struct Trigger {
+    /// The key that started the current recording, and whether it switched
+    /// to hands-free.
+    active: Option<(Key, bool)>,
+}
+
+impl Trigger {
+    fn is_active(&self) -> bool {
+        self.active.is_some()
+    }
+
+    fn on_key(&mut self, event: KeyEvent) -> Step {
+        let Some((key, hands_free)) = self.active else {
+            return match event {
+                KeyEvent::Down(key) => {
+                    self.active = Some((key, false));
+                    Step::Start(mode_of(key))
+                }
+                _ => Step::Nothing,
+            };
+        };
+        match event {
+            KeyEvent::Cancel => {
+                self.active = None;
+                Step::Discard("cancelled")
+            }
+            // Holding: the release ends it, unless it was a quick tap.
+            KeyEvent::Up(k, press) if k == key && !hands_free => match press {
+                Press::Tap => {
+                    self.active = Some((key, true));
+                    Step::HandsFree(mode_of(key))
+                }
+                Press::Hold => self.finish(),
+                Press::Combo => {
+                    self.active = None;
+                    Step::Discard("the key was part of a shortcut")
+                }
+            },
+            // Hands-free: the next press of the same key ends it, but not
+            // when it's used in a shortcut.
+            KeyEvent::Up(k, Press::Tap | Press::Hold) if k == key && hands_free => self.finish(),
+            // The other key, and the next press's key-down, change nothing.
+            _ => Step::Nothing,
+        }
+    }
+
+    fn finish(&mut self) -> Step {
+        match self.active.take() {
+            Some((key, _)) => Step::Finish(mode_of(key)),
+            None => Step::Nothing,
         }
     }
 }
@@ -291,4 +391,92 @@ pub fn save_debug_wav(clip: &Clip) -> Result<PathBuf> {
     let path = PathBuf::from("recordings").join(format!("clip-{stamp}.wav"));
     clip.save_wav(&path)?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use KeyEvent::{Cancel, Down, Up};
+
+    fn run(events: &[KeyEvent]) -> Vec<Step> {
+        let mut t = Trigger::default();
+        events.iter().map(|e| t.on_key(*e)).collect()
+    }
+
+    #[test]
+    fn hold_to_talk() {
+        assert_eq!(
+            run(&[Down(Key::Dictate), Up(Key::Dictate, Press::Hold)]),
+            vec![Step::Start(Mode::Paste), Step::Finish(Mode::Paste)]
+        );
+    }
+
+    #[test]
+    fn tap_on_tap_off() {
+        let steps = run(&[
+            Down(Key::Note),
+            Up(Key::Note, Press::Tap),
+            Down(Key::Note),
+            Up(Key::Note, Press::Tap),
+        ]);
+        assert_eq!(
+            steps,
+            vec![Step::Start(Mode::Note), Step::HandsFree(Mode::Note), Step::Nothing, Step::Finish(Mode::Note)]
+        );
+    }
+
+    #[test]
+    fn shortcuts_are_not_dictation() {
+        assert_eq!(
+            run(&[Down(Key::Dictate), Up(Key::Dictate, Press::Combo)]),
+            vec![Step::Start(Mode::Paste), Step::Discard("the key was part of a shortcut")]
+        );
+        // A shortcut during hands-free recording doesn't stop it.
+        let steps = run(&[
+            Down(Key::Dictate),
+            Up(Key::Dictate, Press::Tap),
+            Down(Key::Dictate),
+            Up(Key::Dictate, Press::Combo),
+            Down(Key::Dictate),
+            Up(Key::Dictate, Press::Tap),
+        ]);
+        assert_eq!(steps.last(), Some(&Step::Finish(Mode::Paste)));
+        assert!(!steps[..5].iter().any(|s| matches!(s, Step::Finish(_) | Step::Discard(_))));
+    }
+
+    #[test]
+    fn escape_cancels_either_way() {
+        assert_eq!(
+            run(&[Down(Key::Dictate), Cancel]),
+            vec![Step::Start(Mode::Paste), Step::Discard("cancelled")]
+        );
+        assert_eq!(
+            run(&[Down(Key::Note), Up(Key::Note, Press::Tap), Cancel]).last(),
+            Some(&Step::Discard("cancelled"))
+        );
+        assert_eq!(run(&[Cancel]), vec![Step::Nothing], "Esc does nothing when not recording");
+    }
+
+    #[test]
+    fn other_key_is_ignored_while_recording() {
+        let steps = run(&[
+            Down(Key::Dictate),
+            Down(Key::Note),
+            Up(Key::Note, Press::Hold),
+            Up(Key::Dictate, Press::Hold),
+        ]);
+        assert_eq!(
+            steps,
+            vec![Step::Start(Mode::Paste), Step::Nothing, Step::Nothing, Step::Finish(Mode::Paste)]
+        );
+    }
+
+    #[test]
+    fn time_limit_finishes() {
+        let mut t = Trigger::default();
+        t.on_key(Down(Key::Note));
+        t.on_key(Up(Key::Note, Press::Tap));
+        assert_eq!(t.finish(), Step::Finish(Mode::Note));
+        assert!(!t.is_active());
+    }
 }

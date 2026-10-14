@@ -51,7 +51,7 @@ export type Mode = "paste" | "note";
 export type EngineEvent =
   | { kind: "loading" }
   | { kind: "ready"; model: string; llm: string | null; microphone: string; notes: boolean }
-  | { kind: "listening"; mode: Mode }
+  | { kind: "listening"; mode: Mode; hands_free: boolean }
   | { kind: "transcribing"; mode: Mode }
   | { kind: "cleaning_up"; mode: Mode }
   | { kind: "filing" }

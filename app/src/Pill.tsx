@@ -18,11 +18,16 @@ export default function Pill() {
   const [phase, setPhase] = useState<Phase>("listening");
   const [mode, setMode] = useState<Mode>("paste");
   const [category, setCategory] = useState<string | null>(null);
+  const [handsFree, setHandsFree] = useState(false);
 
   useEffect(() => {
     const unlisten = listen<EngineEvent>("engine", ({ payload }) => {
       switch (payload.kind) {
         case "listening":
+          setMode(payload.mode);
+          setHandsFree(payload.hands_free);
+          setPhase("listening");
+          break;
         case "transcribing":
         case "cleaning_up":
           setMode(payload.mode);
@@ -52,7 +57,11 @@ export default function Pill() {
 
   let label = LABELS[phase];
   if (phase === "saved") label = category ? `Saved to ${category}` : "Note saved";
-  else if (mode === "note" && phase === "listening") label = "Note · Listening";
+  else if (phase === "listening") {
+    // Hands-free keeps recording after the key is released, so say how to stop.
+    const what = mode === "note" ? "Note" : "Listening";
+    label = handsFree ? `${what} · tap to stop, Esc to cancel` : mode === "note" ? "Note · Listening" : "Listening";
+  }
 
   return (
     <div className="pill" data-state={phase} data-mode={mode}>

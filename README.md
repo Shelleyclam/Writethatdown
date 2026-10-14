@@ -121,6 +121,10 @@ This produces `target\release\whisperflow-app.exe`. Start it, and it sits in the
 
 - **Hold Right Ctrl** anywhere to dictate. A pill at the bottom of the screen shows
   Listening, then Transcribing, and disappears once the text is pasted.
+- **Or tap Right Ctrl** (a quick press on its own) for hands-free: it keeps recording
+  after you let go, until you tap it again. This works for Right Alt notes too. **Esc**
+  cancels a recording, and a forgotten hands-free recording stops after 10 minutes.
+  Using Right Ctrl in a shortcut (like Ctrl+C) never starts a recording.
 - **Click the tray icon** to open the history: copy an entry again, see what Whisper
   heard before cleanup (Original), or delete it. Entries older than 7 days are removed.
 - **Hold Right Alt** to dictate a note. The pill shows "Filing note", then where it

@@ -250,7 +250,8 @@ fn print_event(event: Event) {
             println!("Microphone: {microphone}");
             println!("{}  Ctrl+C to quit.", hotkey::describe());
         }
-        Event::Listening { .. } => println!("\n● Listening..."),
+        Event::Listening { hands_free: false, .. } => println!("\n● Listening..."),
+        Event::Listening { hands_free: true, .. } => println!("  hands-free: tap the key again to stop, Esc to cancel"),
         Event::Transcribing { .. } | Event::CleaningUp { .. } | Event::NotesChanged => {}
         Event::Filing => println!("  filing note..."),
         Event::Ignored { reason } => println!("  (ignored: {reason})"),
