@@ -23,6 +23,22 @@ Built with Rust ([whisper.cpp](https://github.com/ggml-org/whisper.cpp) via
 `whisper-rs`), [Ollama](https://ollama.com), SQLite with
 [sqlite-vec](https://github.com/asg017/sqlite-vec), and a Tauri 2 + React desktop app.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/pill.png" alt="The floating pill while recording hands-free: Listening, tap to stop, Esc to cancel" width="326">
+</p>
+
+**Ask** answers questions from your notes and cites them:
+
+![Ask tab: a question about a knee answered from two dated notes, with numbered citations and the list of source notes](docs/screenshots/ask.png)
+
+| Notes, filed into categories automatically | History of what you dictated |
+|---|---|
+| ![Notes tab with categories and notes grouped by day](docs/screenshots/notes.png) | ![History tab with recent dictations and the apps they were pasted into](docs/screenshots/history.png) |
+
+<sub>Screenshots use made-up example data.</sub>
+
 ## Requirements
 
 - Windows 10 or 11, 64-bit.
