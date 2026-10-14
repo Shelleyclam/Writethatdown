@@ -75,12 +75,13 @@ mod imp {
     use std::sync::mpsc::Sender;
     use std::sync::{Mutex, OnceLock};
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-        HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
-        WM_SYSKEYDOWN, WM_SYSKEYUP,
+        CallNextHookEx, DispatchMessageW, GetMessageW, SetTimer, SetWindowsHookExW, TranslateMessage,
+        UnhookWindowsHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
+        WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
     };
 
     pub const DESCRIPTION: &str = "Hold Right Ctrl to talk, release to transcribe. Tap it for hands-free.";
@@ -91,6 +92,9 @@ mod imp {
     /// AltGr layouts send a fake Left Ctrl with this scan code before Right
     /// Alt; it isn't a real second key.
     const ALTGR_FAKE_CTRL_SCAN: u32 = 0x21D;
+    /// How often the hook is reinstalled, in case Windows dropped it. This is
+    /// also the longest the keys can stay dead after that happens.
+    const REHOOK_EVERY_MS: u32 = 5_000;
 
     /// Per-key press tracking.
     struct KeyState {
@@ -207,19 +211,38 @@ mod imp {
 
         // The hook only fires while its thread pumps window messages.
         std::thread::spawn(move || unsafe {
-            let module = GetModuleHandleW(PCWSTR::null()).ok().map(Into::into);
-            match SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module, 0) {
-                Ok(_hook) => {
-                    let _ = ready_tx.send(Ok(()));
-                    let mut msg = MSG::default();
-                    while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                        let _ = TranslateMessage(&msg);
-                        DispatchMessageW(&msg);
-                    }
-                }
+            // Windows silently removes a low-level hook that takes too long
+            // to respond (about a second), which happens when memory is tight
+            // (e.g. while a large model loads). Top priority makes that less
+            // likely, and reinstalling the hook regularly recovers if it
+            // happens anyway.
+            let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+            let module: Option<HINSTANCE> = GetModuleHandleW(PCWSTR::null()).ok().map(Into::into);
+            let install = || SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module, 0);
+            let mut hook = match install() {
+                Ok(hook) => hook,
                 Err(e) => {
                     let _ = ready_tx.send(Err(e.to_string()));
+                    return;
                 }
+            };
+            let _ = ready_tx.send(Ok(()));
+
+            SetTimer(None, 0, REHOOK_EVERY_MS, None);
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                if msg.message == WM_TIMER {
+                    // Install the new hook before removing the old one, so no
+                    // key is missed in between. Key state lives in statics, so
+                    // a key held across the swap still works.
+                    if let Ok(fresh) = install() {
+                        let _ = UnhookWindowsHookEx(hook);
+                        hook = fresh;
+                    }
+                    continue;
+                }
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
             }
         });
 
