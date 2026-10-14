@@ -40,6 +40,7 @@ All planned steps are done. Known open item: the first word can be cut off becau
 
 - Don't start the next step until the user confirms the current one works.
 - Commit to git after each working milestone.
+- Don't add `Co-Authored-By` or other AI attribution lines to commit messages or PRs (the user removed them from history).
 - Keep the existing design and module structure; don't swap libraries unless something is truly broken, and explain why first.
 
 ## Build notes
