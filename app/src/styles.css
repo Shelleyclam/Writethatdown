@@ -8,7 +8,9 @@
   --muted: #6b6b6b;
   --line: #e6e6e6;
   --hover: #f4f4f4;
-  --accent: #d93025; /* the recording dot, and errors */
+  --selected: #ececec;
+  --highlight: #fff4c2;
+  --accent: #d93025; /* the recording dot, deletes, and errors */
   --ok: #1e8e3e;
   --pill-bg: rgba(28, 28, 30, 0.92);
   --pill-text: #f5f5f5;
@@ -21,6 +23,8 @@
     --muted: #9a9a9a;
     --line: #2e2e2e;
     --hover: #262626;
+    --selected: #2c2c2c;
+    --highlight: #3d3720;
     --accent: #f28b82;
     --ok: #81c995;
   }
@@ -46,9 +50,15 @@ p {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
   color: inherit;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 /* ---------- Pill ---------- */
@@ -93,6 +103,16 @@ html.pill-window #root {
   animation: breathe 1.4s ease-in-out infinite;
 }
 
+/* Notes are told apart from dictation by colour only, not decoration. */
+.pill[data-mode="note"][data-state="listening"] .pill-dot {
+  background: #5ea1ff;
+}
+
+.pill[data-state="saved"] .pill-dot {
+  background: #5ec27a;
+  opacity: 1;
+}
+
 .pill[data-state="not_pasted"] .pill-dot {
   background: #ffbd2e;
   opacity: 1;
@@ -110,28 +130,49 @@ html.pill-window #root {
   }
 }
 
-/* ---------- History ---------- */
+/* ---------- Main window ---------- */
 
-html.history-window,
-html.history-window body {
+html.main-window,
+html.main-window body {
   background: var(--bg);
 }
 
-.history {
-  max-width: 720px;
+.app {
+  max-width: 880px;
   margin: 0 auto;
-  padding: 24px 24px 32px;
+  padding: 16px 24px 32px;
 }
 
-.history-header {
+.app-header {
   display: grid;
-  gap: 4px;
+  gap: 8px;
   margin-bottom: 16px;
 }
 
-.history-header h1 {
-  font-size: 20px;
+.tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  padding: 8px 0;
+  margin-bottom: -1px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
   font-weight: 600;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--text);
 }
 
 .status {
@@ -162,7 +203,8 @@ html.history-window body {
   background: var(--accent);
 }
 
-.notice {
+.notice,
+.muted {
   font-size: var(--size-small);
   color: var(--muted);
 }
@@ -181,8 +223,12 @@ html.history-window body {
   outline: none;
 }
 
-.search:focus {
+.search:focus,
+textarea:focus,
+.inline-form input:focus,
+.category-edit input:focus {
   border-color: var(--muted);
+  outline: none;
 }
 
 .day h2 {
@@ -202,10 +248,15 @@ html.history-window body {
 .item {
   padding: 12px 8px;
   border-bottom: 1px solid var(--line);
+  transition: background-color 0.4s;
 }
 
 .item:hover {
   background: var(--hover);
+}
+
+.item[data-highlight] {
+  background: var(--highlight);
 }
 
 .item-text {
@@ -221,6 +272,7 @@ html.history-window body {
 .item-meta {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 16px;
   margin-top: 4px;
   font-size: var(--size-small);
@@ -231,14 +283,19 @@ html.history-window body {
   display: flex;
   gap: 12px;
   opacity: 0;
+  white-space: nowrap;
 }
 
 .item:hover .item-actions,
-.item:focus-within .item-actions {
+.item:focus-within .item-actions,
+.item-actions[data-pinned] {
   opacity: 1;
 }
 
-.item-actions button {
+.item-actions button,
+.category-actions button,
+.note-edit-actions button,
+.ask-actions button:not(.primary) {
   padding: 0;
   border: none;
   background: none;
@@ -247,10 +304,19 @@ html.history-window body {
 }
 
 .item-actions button:hover,
-.item-actions button:focus-visible {
+.item-actions button:focus-visible,
+.category-actions button:hover,
+.category-actions button:focus-visible,
+.note-edit-actions button:hover,
+.ask-actions button:not(.primary):hover {
   color: var(--text);
   text-decoration: underline;
   outline: none;
+}
+
+.item-actions .danger,
+.item-actions .danger:hover {
+  color: var(--accent);
 }
 
 .empty {
@@ -263,4 +329,264 @@ html.history-window body {
   margin-top: 24px;
   font-size: var(--size-small);
   color: var(--muted);
+}
+
+/* ---------- Notes ---------- */
+
+.notes {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.categories {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 2px;
+}
+
+.category {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.category:hover {
+  background: var(--hover);
+}
+
+.category[aria-current="true"] {
+  background: var(--selected);
+  font-weight: 600;
+}
+
+.category .count {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.category-row {
+  display: grid;
+}
+
+.category-actions {
+  display: none;
+  gap: 12px;
+  padding: 0 8px 4px;
+  font-size: var(--size-small);
+}
+
+.category-row:hover .category-actions,
+.category-row:focus-within .category-actions {
+  display: flex;
+}
+
+.category-edit {
+  padding: 2px 0;
+}
+
+.category-edit input,
+.category-edit select,
+.inline-form input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.inline-form {
+  display: inline;
+}
+
+.inline-form input {
+  width: 140px;
+  padding: 0 6px;
+  font-size: var(--size-small);
+}
+
+.category-select {
+  field-sizing: content;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--size-small);
+  cursor: pointer;
+}
+
+.category-select:hover,
+.category-select:focus {
+  color: var(--text);
+  outline: none;
+}
+
+.category-select option {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.note-edit textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.note-edit-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: var(--size-small);
+}
+
+/* ---------- Ask ---------- */
+
+.ask {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 140px);
+}
+
+.conversation {
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: 24px;
+  padding-bottom: 16px;
+}
+
+.turn {
+  display: grid;
+  gap: 8px;
+}
+
+.question {
+  font-weight: 600;
+}
+
+.answer-text {
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.cites {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0 2px;
+  vertical-align: 1px;
+}
+
+.cite {
+  min-width: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+button.cite:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+.sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.sources button {
+  display: grid;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-left: 2px solid var(--line);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--size-small);
+}
+
+.sources button:hover {
+  background: var(--hover);
+  border-left-color: var(--muted);
+}
+
+.source-head {
+  color: var(--muted);
+}
+
+.source-excerpt {
+  color: var(--text);
+}
+
+.ask-form {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  gap: 8px;
+  padding: 12px 0 8px;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+
+.ask-form textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  resize: none;
+  line-height: 1.5;
+}
+
+.ask-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
+}
+
+.primary {
+  padding: 6px 16px;
+  border: 1px solid var(--text);
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg);
+  cursor: pointer;
+}
+
+.primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+@media (max-width: 600px) {
+  .notes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .categories {
+    position: static;
+  }
 }

@@ -1,27 +1,29 @@
 //! whisperflow desktop app: tray icon, floating "listening" pill, and the
-//! history window, around the dictation engine from the core crate.
+//! main window (history, notes, ask), around the dictation engine from the
+//! core crate.
 
 // No console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod commands;
 mod pill;
 
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use whisperflow::engine::{self, Event};
-use whisperflow::storage::{Entry, Storage};
-use whisperflow::{cleanup, hotkey};
+use whisperflow::engine::{self, Event, Mode};
+use whisperflow::{cleanup, storage};
 
 /// Passed by the "start at login" entry, so the app starts quietly in the tray.
 const AUTOSTART_ARG: &str = "--minimized";
-const HISTORY_LIMIT: usize = 500;
+const MAIN_WINDOW: &str = "main";
 
-/// What the history window shows in its status line.
+/// What the main window shows in its status line.
 #[derive(Clone, Serialize)]
 struct Status {
     /// "loading", "ready" or "error".
@@ -29,22 +31,9 @@ struct Status {
     detail: String,
 }
 
-struct AppState {
+pub struct AppState {
     db_path: PathBuf,
     status: Mutex<Status>,
-}
-
-#[tauri::command]
-fn get_history(state: tauri::State<AppState>) -> Result<Vec<Entry>, String> {
-    let storage = Storage::open(&state.db_path).map_err(|e| format!("{e:#}"))?;
-    storage.prune().map_err(|e| format!("{e:#}"))?;
-    storage.recent(HISTORY_LIMIT).map_err(|e| format!("{e:#}"))
-}
-
-#[tauri::command]
-fn delete_entry(state: tauri::State<AppState>, id: i64) -> Result<(), String> {
-    let storage = Storage::open(&state.db_path).map_err(|e| format!("{e:#}"))?;
-    storage.delete(id).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -55,11 +44,25 @@ fn get_status(state: tauri::State<AppState>) -> Status {
 fn main() {
     tauri::Builder::default()
         // A second copy would install a second keyboard hook and paste twice.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_history(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![AUTOSTART_ARG])))
-        .invoke_handler(tauri::generate_handler![get_history, delete_entry, get_status])
+        .invoke_handler(tauri::generate_handler![
+            get_status,
+            commands::get_history,
+            commands::delete_entry,
+            commands::promote_to_note,
+            commands::get_notes,
+            commands::get_categories,
+            commands::update_note,
+            commands::set_note_category,
+            commands::delete_note,
+            commands::rename_category,
+            commands::merge_categories,
+            commands::ask,
+        ])
         .setup(|app| {
-            let db_path = app.path().app_data_dir()?.join("whisperflow.db");
+            // Same database the command-line tool uses.
+            let db_path = storage::default_path();
             app.manage(AppState {
                 db_path: db_path.clone(),
                 status: Mutex::new(Status { state: "loading", detail: "Loading models…".into() }),
@@ -67,10 +70,10 @@ fn main() {
 
             pill::create(app.handle())?;
             let started_at_login = std::env::args().any(|a| a == AUTOSTART_ARG);
-            WebviewWindowBuilder::new(app, "history", WebviewUrl::default())
+            WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::default())
                 .title("whisperflow")
-                .inner_size(560.0, 680.0)
-                .min_inner_size(400.0, 360.0)
+                .inner_size(780.0, 720.0)
+                .min_inner_size(520.0, 420.0)
                 .visible(!started_at_login)
                 .build()?;
             build_tray(app.handle())?;
@@ -78,9 +81,9 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the history window only hides it; the app lives in the tray.
+            // Closing the main window only hides it; the app lives in the tray.
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "history" {
+                if window.label() == MAIN_WINDOW {
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -97,8 +100,8 @@ fn main() {
         });
 }
 
-fn show_history(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("history") {
+fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
@@ -106,7 +109,7 @@ fn show_history(app: &AppHandle) {
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open history", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open whisperflow", true, None::<&str>)?;
     let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart = CheckMenuItem::with_id(app, "autostart", "Start at login", true, autostart_on, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit whisperflow", true, None::<&str>)?;
@@ -121,7 +124,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id().as_ref() {
-            "open" => show_history(app),
+            "open" => show_main(app),
             "autostart" => {
                 let manager = app.autolaunch();
                 let result = if manager.is_enabled().unwrap_or(false) { manager.disable() } else { manager.enable() };
@@ -136,7 +139,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                show_history(tray.app_handle());
+                show_main(tray.app_handle());
             }
         })
         .build(app)?;
@@ -162,43 +165,50 @@ fn start_engine(app: AppHandle, db_path: PathBuf) {
             llm: Some(cleanup::DEFAULT_MODEL.into()),
             paste: true,
             save_wav: false,
-            history_db: Some(db_path),
+            db: Some(db_path),
+            notes: true,
         };
         let handle = app.clone();
         let result = engine::run(config, move |event| on_engine_event(&handle, event));
         if let Err(e) = result {
             set_status(&app, "error", format!("{e:#}"));
             pill::hide(&app);
-            show_history(&app);
+            show_main(&app);
         }
     });
 }
 
 fn on_engine_event(app: &AppHandle, event: Event) {
-    // The pill and history windows render from the same events. Send first,
+    // The pill and main windows render from the same events. Send first,
     // so the pill already shows the new state when it appears.
     let _ = app.emit("engine", event.clone());
     match &event {
         Event::Loading => set_status(app, "loading", "Loading models…".into()),
-        Event::Ready { model, llm, .. } => {
+        Event::Ready { model, llm, notes, .. } => {
+            let keys = if *notes { "Right Ctrl to dictate, Right Alt for a note" } else { "Right Ctrl to dictate" };
             let cleanup = llm.as_deref().unwrap_or("no cleanup");
-            set_status(app, "ready", format!("Ready. {}. {model}, {cleanup}", hotkey_hint()));
+            set_status(app, "ready", format!("Ready. Hold {keys}. {model}, {cleanup}"));
         }
-        Event::Listening => pill::show(app),
-        Event::Done(d) => {
-            let _ = app.emit("history-changed", ());
-            if d.pasted {
-                pill::hide(app);
-            } else {
-                pill::hide_after(app, std::time::Duration::from_millis(2500));
+        Event::Listening { .. } => pill::show(app),
+        Event::Done(d) => match d.mode {
+            Mode::Paste => {
+                let _ = app.emit("history-changed", ());
+                if d.pasted {
+                    pill::hide(app);
+                } else {
+                    pill::hide_after(app, Duration::from_millis(2500));
+                }
             }
+            Mode::Note => {
+                let _ = app.emit("notes-changed", ());
+                // Leave "Saved to <category>" up long enough to read.
+                pill::hide_after(app, Duration::from_millis(1800));
+            }
+        },
+        Event::NotesChanged => {
+            let _ = app.emit("notes-changed", ());
         }
         Event::Ignored { .. } => pill::hide(app),
-        Event::Transcribing | Event::CleaningUp | Event::Warning { .. } => {}
+        Event::Transcribing { .. } | Event::CleaningUp { .. } | Event::Filing | Event::Warning { .. } => {}
     }
-}
-
-fn hotkey_hint() -> &'static str {
-    // "Hold Right Ctrl to talk, release to transcribe." -> "Hold Right Ctrl to talk"
-    hotkey::describe().split(',').next().unwrap_or("Hold Right Ctrl to talk")
 }

@@ -7,9 +7,14 @@ with Whisper, cleaned up by a small local LLM (filler words, punctuation,
 "Tuesday, no wait, Wednesday" corrections), and pasted into whatever app has focus.
 Whatever you had on the clipboard is put back afterwards.
 
-**Step 4 (this version):** a desktop app that lives in the tray, shows a small
-floating pill while you talk, and keeps a 7-day history of what you dictated.
-The command-line tool from steps 1-3 is still there for benchmarks and debugging.
+A desktop app lives in the tray, shows a small floating pill while you talk, and
+keeps a 7-day history of what you dictated.
+
+**Step 5 (this version):** hold **Right Alt** to dictate a note instead. Notes are
+filed into categories automatically (or say "file this under X"), kept until you
+delete them, and you can ask questions about them in the app's Ask tab. Answers
+come only from your notes and cite them. The command-line tool is still there for
+benchmarks and debugging.
 
 ## One-time setup
 
@@ -42,7 +47,12 @@ Then, in a new PowerShell window:
 
 ```powershell
 ollama pull qwen2.5:1.5b
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
 ```
+
+`qwen2.5:1.5b` cleans up dictation, `qwen2.5:7b` files notes and answers questions
+(about 5 GB of RAM while loaded), and `nomic-embed-text` makes notes searchable.
 
 If Ollama isn't running, whisperflow says so at startup and pastes the raw transcript.
 
@@ -90,6 +100,9 @@ Other options:
 | `--no-cleanup` | Paste the raw Whisper transcript, skip the LLM |
 | `clean <text>` | Run the cleanup pass on typed text |
 | `bench-cleanup [models]` | Compare cleanup models on built-in test sentences |
+| `--notes` | Also hold Right Alt to dictate notes (saved in the app's database) |
+| `note <text>` / `ask <question>` | File a typed note / ask about your notes |
+| `reindex` | Make notes saved while Ollama was off searchable |
 | `--no-paste` | Only print the text in the terminal, don't paste it |
 | `--save-wav` | Keeps each recording in `recordings\` for debugging |
 | `file <clip.wav>` | Transcribes an existing WAV file |
@@ -110,8 +123,15 @@ This produces `target\release\whisperflow-app.exe`. Start it, and it sits in the
   Listening, then Transcribing, and disappears once the text is pasted.
 - **Click the tray icon** to open the history: copy an entry again, see what Whisper
   heard before cleanup (Original), or delete it. Entries older than 7 days are removed.
-- **Right-click the tray icon** for Start at login and Quit. Closing the history window
-  keeps the app running.
+- **Hold Right Alt** to dictate a note. The pill shows "Filing note", then where it
+  was saved. Say "file this under groceries" at the start or end to choose the category.
+  While whisperflow runs, Right Alt doesn't reach other apps (so it can't be used as AltGr).
+- **Notes tab:** browse by category, rename or merge categories, edit, recategorize or
+  delete notes. **History** entries have "Save as note".
+- **Ask tab:** ask about your notes. Click a citation to open the note. The first
+  question after a while takes ~30 s while the model loads, then ~10-15 s each.
+- **Right-click the tray icon** for Start at login and Quit. Closing the window keeps the
+  app running.
 
 History is stored in `%APPDATA%\local.whisperflow\whisperflow.db`.
 
@@ -137,7 +157,10 @@ src/hotkey.rs      Right Ctrl push-to-talk (Windows low-level keyboard hook)
 src/paste.rs       paste into the focused app, saving and restoring the clipboard
 src/cleanup.rs     LLM cleanup pass via Ollama, with checks that fall back to the raw text
 src/transcribe.rs  Whisper model loading and transcription
-src/storage.rs     SQLite paste history (pruned after 7 days)
+src/storage.rs     SQLite: paste history (pruned after 7 days), notes, categories, vectors
+src/notes.rs       filing notes: "file this under", categories, chunking, search index
+src/ask.rs         answering questions from notes, with citations
+src/ollama.rs      small client for the local Ollama server
 src/engine.rs      the dictation loop: record, transcribe, clean up, paste, save
 src/main.rs        command-line tool (run / bench / file / clean / bench-cleanup)
 app/src-tauri/     desktop app: tray, pill window, history commands (Rust)
@@ -150,5 +173,5 @@ scripts/           model downloader
 1. ~~Hold to record, transcribe locally, benchmark~~
 2. ~~Paste the text into whatever app is focused~~
 3. ~~Clean-up pass with a local LLM (Ollama): filler words, punctuation, self-corrections~~
-4. ~~Tauri app: floating "listening" pill, tray icon, history window~~ ← you are here
-5. Notes key (Right Alt), auto-categories, and a chat window to ask questions about your notes
+4. ~~Tauri app: floating "listening" pill, tray icon, history window~~
+5. ~~Notes key (Right Alt), auto-categories, and a chat window to ask questions about your notes~~ ← you are here

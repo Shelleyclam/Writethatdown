@@ -1,19 +1,23 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import type { EngineEvent } from "./types";
+import type { EngineEvent, Mode } from "./types";
 
-type PillState = "listening" | "transcribing" | "cleaning_up" | "not_pasted";
+type Phase = "listening" | "transcribing" | "cleaning_up" | "filing" | "saved" | "not_pasted";
 
-const LABELS: Record<PillState, string> = {
+const LABELS: Record<Phase, string> = {
   listening: "Listening",
   transcribing: "Transcribing",
   cleaning_up: "Cleaning up",
+  filing: "Filing note",
+  saved: "Saved",
   not_pasted: "Couldn't paste. It's in your history.",
 };
 
 /** The floating pill. Rust shows and hides the window; this only picks the text. */
 export default function Pill() {
-  const [state, setState] = useState<PillState>("listening");
+  const [phase, setPhase] = useState<Phase>("listening");
+  const [mode, setMode] = useState<Mode>("paste");
+  const [category, setCategory] = useState<string | null>(null);
 
   useEffect(() => {
     const unlisten = listen<EngineEvent>("engine", ({ payload }) => {
@@ -21,14 +25,23 @@ export default function Pill() {
         case "listening":
         case "transcribing":
         case "cleaning_up":
-          setState(payload.kind);
+          setMode(payload.mode);
+          setPhase(payload.kind);
+          break;
+        case "filing":
+          setPhase("filing");
           break;
         case "done":
-          // Reset for next time, unless there's a message to read.
-          setState(payload.pasted ? "listening" : "not_pasted");
+          if (payload.mode === "note") {
+            setCategory(payload.category);
+            setPhase("saved");
+          } else {
+            // Reset for next time, unless there's a message to read.
+            setPhase(payload.pasted ? "listening" : "not_pasted");
+          }
           break;
         case "ignored":
-          setState("listening");
+          setPhase("listening");
           break;
       }
     });
@@ -37,10 +50,14 @@ export default function Pill() {
     };
   }, []);
 
+  let label = LABELS[phase];
+  if (phase === "saved") label = category ? `Saved to ${category}` : "Note saved";
+  else if (mode === "note" && phase === "listening") label = "Note · Listening";
+
   return (
-    <div className="pill" data-state={state}>
+    <div className="pill" data-state={phase} data-mode={mode}>
       <span className="pill-dot" aria-hidden />
-      <span>{LABELS[state]}</span>
+      <span>{label}</span>
     </div>
   );
 }

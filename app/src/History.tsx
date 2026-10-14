@@ -1,73 +1,50 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { EngineEvent, Entry, Status } from "./types";
+import { appName, errorText, formatTime, groupByDay } from "./format";
+import type { Entry, Note } from "./types";
 
-const WARNING_MS = 8000;
-
-export default function History() {
+/** What was pasted with Right Ctrl over the last 7 days. */
+export default function History({ onError }: { onError: (message: string) => void }) {
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [status, setStatus] = useState<Status>({ state: "loading", detail: "Loading models…" });
-  const [warning, setWarning] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     invoke<Entry[]>("get_history")
-      .then((rows) => {
-        setEntries(rows);
-        setError(null);
-      })
-      .catch((e) => setError(String(e)));
-  }, []);
+      .then(setEntries)
+      .catch((e) => onError(errorText(e)));
+  }, [onError]);
 
   useEffect(() => {
     load();
-    invoke<Status>("get_status").then(setStatus);
-    const stops = [
-      listen("history-changed", load),
-      listen<Status>("status", ({ payload }) => setStatus(payload)),
-      listen<EngineEvent>("engine", ({ payload }) => {
-        if (payload.kind === "warning") setWarning(payload.message);
-      }),
-    ];
+    const stop = listen("history-changed", load);
     return () => {
-      stops.forEach((p) => p.then((stop) => stop()));
+      stop.then((s) => s());
     };
   }, [load]);
-
-  useEffect(() => {
-    if (!warning) return;
-    const t = setTimeout(() => setWarning(null), WARNING_MS);
-    return () => clearTimeout(t);
-  }, [warning]);
 
   const remove = (id: number) => {
     setEntries((rows) => rows.filter((r) => r.id !== id));
     invoke("delete_entry", { id }).catch((e) => {
-      setError(String(e));
+      onError(errorText(e));
       load();
     });
   };
 
-  const groups = useMemo(() => groupByDay(filter(entries, query)), [entries, query]);
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const shown = q
+      ? entries.filter((e) => e.cleaned_text.toLowerCase().includes(q) || e.raw_text.toLowerCase().includes(q))
+      : entries;
+    return groupByDay(shown, (e) => e.created_at);
+  }, [entries, query]);
 
   return (
-    <main className="history">
-      <header className="history-header">
-        <h1>History</h1>
-        <p className="status" data-state={status.state}>
-          <span className="status-dot" aria-hidden />
-          {status.detail}
-        </p>
-        {warning && <p className="notice">{warning}</p>}
-        {error && <p className="notice notice-error">{error}</p>}
-      </header>
-
+    <main className="view">
       <input
         className="search"
         type="search"
-        placeholder="Search"
+        placeholder="Search history"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
@@ -82,21 +59,22 @@ export default function History() {
             <h2>{day}</h2>
             <ul>
               {rows.map((entry) => (
-                <Item key={entry.id} entry={entry} onDelete={() => remove(entry.id)} />
+                <Item key={entry.id} entry={entry} onDelete={() => remove(entry.id)} onError={onError} />
               ))}
             </ul>
           </section>
         ))
       )}
 
-      <footer className="footnote">Kept for 7 days.</footer>
+      <footer className="footnote">History is kept for 7 days. Save anything you want to keep as a note.</footer>
     </main>
   );
 }
 
-function Item({ entry, onDelete }: { entry: Entry; onDelete: () => void }) {
+function Item({ entry, onDelete, onError }: { entry: Entry; onDelete: () => void; onError: (m: string) => void }) {
   const [showRaw, setShowRaw] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState<"idle" | "saving" | string>("idle");
   const changed = entry.raw_text !== entry.cleaned_text;
   const text = showRaw ? entry.raw_text : entry.cleaned_text;
 
@@ -104,6 +82,18 @@ function Item({ entry, onDelete }: { entry: Entry; onDelete: () => void }) {
     await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  const saveAsNote = async () => {
+    setSaving("saving");
+    try {
+      const saved = await invoke<{ note: Note; warnings: string[] }>("promote_to_note", { id: entry.id });
+      saved.warnings.forEach(onError);
+      setSaving(saved.note.category ? `Saved to ${saved.note.category}` : "Saved as note");
+    } catch (e) {
+      onError(errorText(e));
+      setSaving("idle");
+    }
   };
 
   return (
@@ -116,7 +106,12 @@ function Item({ entry, onDelete }: { entry: Entry; onDelete: () => void }) {
           {formatTime(entry.created_at)}
           {entry.source_app && ` · ${appName(entry.source_app)}`}
         </span>
-        <span className="item-actions">
+        <span className="item-actions" data-pinned={saving !== "idle" || undefined}>
+          {saving === "idle" ? (
+            <button onClick={saveAsNote}>Save as note</button>
+          ) : (
+            <span>{saving === "saving" ? "Saving…" : saving}</span>
+          )}
           <button onClick={copy}>{copied ? "Copied" : "Copy"}</button>
           {changed && <button onClick={() => setShowRaw(!showRaw)}>{showRaw ? "Cleaned" : "Original"}</button>}
           <button onClick={onDelete}>Delete</button>
@@ -124,41 +119,4 @@ function Item({ entry, onDelete }: { entry: Entry; onDelete: () => void }) {
       </div>
     </li>
   );
-}
-
-function filter(entries: Entry[], query: string): Entry[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return entries;
-  return entries.filter(
-    (e) => e.cleaned_text.toLowerCase().includes(q) || e.raw_text.toLowerCase().includes(q),
-  );
-}
-
-/** Entries are newest first; keep that order within and across days. */
-function groupByDay(entries: Entry[]): [string, Entry[]][] {
-  const groups = new Map<string, Entry[]>();
-  for (const e of entries) {
-    const day = dayLabel(e.created_at);
-    groups.set(day, [...(groups.get(day) ?? []), e]);
-  }
-  return [...groups];
-}
-
-function dayLabel(ms: number): string {
-  const date = new Date(ms);
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === today.toDateString()) return "Today";
-  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return date.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
-}
-
-function formatTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-}
-
-/** "chrome.exe" -> "chrome" */
-function appName(exe: string): string {
-  return exe.replace(/\.exe$/i, "");
 }

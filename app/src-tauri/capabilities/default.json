@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the history window and the pill",
-  "windows": ["history", "pill"],
+  "description": "Permissions for the main window and the pill",
+  "windows": ["main", "pill"],
   "permissions": ["core:default"]
 }

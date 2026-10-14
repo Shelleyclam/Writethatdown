@@ -17,6 +17,7 @@
 //!   --llm <name>      Ollama model for cleanup (default: qwen2.5:1.5b)
 //!   --no-cleanup      skip the cleanup pass, use the raw transcript
 //!   --no-paste        only print the text, don't paste it
+//!   --notes           also hold Right Alt to dictate notes (saved in the app's database)
 //!   --save-wav        keep each recording in recordings\ (for debugging)
 
 use anyhow::{anyhow, bail, Result};
@@ -51,6 +52,7 @@ Options:
   --llm <name>      Ollama model for cleanup (default: qwen2.5:1.5b)
   --no-cleanup      skip the cleanup pass, use the raw transcript
   --no-paste        only print the text, don't paste it
+  --notes           also hold Right Alt to dictate notes (saved in the app's database)
   --save-wav        keep each recording in recordings\\ (for debugging)";
 
 /// Models compared by `bench-cleanup` when none are named.
@@ -77,6 +79,7 @@ struct Options {
     paste: bool,
     cleanup: bool,
     llm: String,
+    notes: bool,
     /// Positional arguments after the command.
     rest: Vec<String>,
 }
@@ -93,6 +96,7 @@ fn parse_args() -> Result<Options> {
         paste: true,
         cleanup: true,
         llm: cleanup::DEFAULT_MODEL.into(),
+        notes: false,
         rest: Vec::new(),
     };
     let mut positional = Vec::new();
@@ -108,6 +112,7 @@ fn parse_args() -> Result<Options> {
             "--save-wav" => o.save_wav = true,
             "--no-paste" => o.paste = false,
             "--no-cleanup" => o.cleanup = false,
+            "--notes" => o.notes = true,
             "--llm" => o.llm = args.next().ok_or_else(|| anyhow!("--llm needs a value"))?,
             "-h" | "--help" => {
                 println!("{HELP}");
@@ -246,7 +251,8 @@ fn print_event(event: Event) {
             println!("{}  Ctrl+C to quit.", hotkey::describe());
         }
         Event::Listening { .. } => println!("\n● Listening..."),
-        Event::Transcribing { .. } | Event::CleaningUp { .. } | Event::Filing | Event::NotesChanged => {}
+        Event::Transcribing { .. } | Event::CleaningUp { .. } | Event::NotesChanged => {}
+        Event::Filing => println!("  filing note..."),
         Event::Ignored { reason } => println!("  (ignored: {reason})"),
         Event::Warning { message } => eprintln!("  {message}"),
         Event::Done(d) => {
@@ -274,8 +280,9 @@ fn run(o: &Options) -> Result<()> {
         llm: o.cleanup.then(|| o.llm.clone()),
         paste: o.paste,
         save_wav: o.save_wav,
-        db: None,
-        notes: false,
+        // History and notes go to the desktop app's database, only with --notes.
+        db: o.notes.then(storage::default_path),
+        notes: o.notes,
     };
     engine::run(config, print_event)
 }
