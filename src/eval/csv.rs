@@ -3,6 +3,25 @@
 //! `;` as the separator (Excel uses it in regions where `,` is the decimal
 //! mark).
 
+/// The file's text. Excel's plain "CSV" format saves in Windows-1252, not
+/// UTF-8 (only "CSV UTF-8" does), so fall back to that.
+pub fn decode(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| windows_1252(b)).collect())
+}
+
+/// Windows-1252 matches Latin-1 except for 0x80-0x9F, where it has curly
+/// quotes, dashes and a few letters.
+fn windows_1252(b: u8) -> char {
+    const HIGH: [char; 32] = [
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}', '\u{90}', '‘',
+        '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}', 'ž', 'Ÿ',
+    ];
+    match b {
+        0x80..=0x9f => HIGH[(b - 0x80) as usize],
+        _ => b as char,
+    }
+}
+
 /// Rows of fields. Blank rows are dropped.
 pub fn parse(text: &str) -> Vec<Vec<String>> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -92,6 +111,12 @@ mod tests {
     #[test]
     fn reads_semicolon_csv_without_final_newline() {
         assert_eq!(parse("file;said\n003.wav;one, two"), strings(&[&["file", "said"], &["003.wav", "one, two"]]));
+    }
+
+    #[test]
+    fn decodes_excel_ansi_csv() {
+        assert_eq!(decode(b"don\x92t \x93hi\x94 caf\xe9".to_vec()), "don’t “hi” café");
+        assert_eq!(decode("don’t".as_bytes().to_vec()), "don’t");
     }
 
     #[test]

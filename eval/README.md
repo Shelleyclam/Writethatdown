@@ -77,8 +77,16 @@ Two tags are special:
   added automatically. Don't add them yourself.
 
 Extra columns (your own comments, say) are ignored. Save with **File > Save As > CSV
-UTF-8 (Comma delimited)**. Rows with an empty `said` or `wanted` are skipped with a
-message, so you can record first and fill in the sheet later.
+UTF-8 (Comma delimited)** (plain CSV works too). Excel turns `001` into `1`; that's
+fine, a plain number means the numbered recording. Rows with an empty `said` or
+`wanted` are skipped with a message, so you can record first and fill in the sheet
+later.
+
+To check the sheet against the recordings without running any models:
+
+```powershell
+.\target\release\whisperflow.exe eval --check
+```
 
 ## 3. Run
 

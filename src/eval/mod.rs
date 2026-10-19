@@ -60,8 +60,8 @@ pub struct Loaded {
 /// extra columns ignored): `file`, `said`, `wanted`, and optionally `tags`.
 /// Text in brackets is ignored, so "said (verbatim)" works too.
 pub fn load_cases(path: &Path) -> Result<Loaded> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("Could not read {}", path.display()))?;
-    let rows = csv::parse(&text);
+    let bytes = std::fs::read(path).with_context(|| format!("Could not read {}", path.display()))?;
+    let rows = csv::parse(&csv::decode(bytes));
     let Some((header, rows)) = rows.split_first() else { bail!("{} is empty", path.display()) };
     let column = |names: &[&str]| {
         header.iter().position(|h| {
@@ -89,7 +89,11 @@ pub fn load_cases(path: &Path) -> Result<Loaded> {
             continue;
         }
         if Path::new(&case.file).extension().is_none() {
-            case.file.push_str(".wav");
+            // Excel turns "001" into 1, so a plain number means the recorded clip.
+            case.file = match case.file.parse::<u32>() {
+                Ok(n) => format!("{n:03}.wav"),
+                Err(_) => format!("{}.wav", case.file),
+            };
         }
         if case.said.is_empty() || case.wanted.is_empty() {
             skipped.push(format!("{}: 'said' or 'wanted' is empty", case.file));
@@ -353,14 +357,14 @@ mod tests {
             &path,
             "Tags,File,Said (verbatim),Wanted,Notes\n\
              \"Names, filler\",001.wav,um send it to shelly,Send it to Shelley.,first try\n\
-             ,002,hello there,Hello there.,\n\
+             ,2,hello there,Hello there.,\n\
              note,003.wav,still recording,,\n",
         )
         .unwrap();
         let loaded = load_cases(&path).unwrap();
         assert_eq!(loaded.cases.len(), 2);
         assert_eq!(loaded.cases[0].tags, vec!["names", "filler"]);
-        assert_eq!(loaded.cases[1].file, "002.wav", "extension added");
+        assert_eq!(loaded.cases[1].file, "002.wav", "Excel's 2 means 002.wav");
         assert_eq!(loaded.skipped, vec!["003.wav: 'said' or 'wanted' is empty"]);
 
         std::fs::write(&path, "file,said,wanted\n001.wav,a,b\n001.WAV,c,d\n").unwrap();

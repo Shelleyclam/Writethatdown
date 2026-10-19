@@ -27,6 +27,7 @@
 //!   --tags <a,b>      only cases with any of these tags
 //!   --compare         run with and without cleanup, side by side
 //!   --judge           also ask qwen2.5:7b whether cleanup kept the meaning (slow)
+//!   --check           only check the sheet against the recordings
 //!   --out <file>      where to write the results JSON
 
 use anyhow::{anyhow, bail, Result};
@@ -72,6 +73,7 @@ Eval options:
   --tags <a,b>      only cases with any of these tags
   --compare         run with and without cleanup, side by side
   --judge           also ask qwen2.5:7b whether cleanup kept the meaning (slow)
+  --check           only check the sheet against the recordings
   --out <file>      where to write the results JSON";
 
 /// Where `record` saves clips and `eval` looks for them.
@@ -111,6 +113,7 @@ struct Options {
     out: Option<PathBuf>,
     compare: bool,
     judge: bool,
+    check: bool,
     /// Positional arguments after the command.
     rest: Vec<String>,
 }
@@ -133,6 +136,7 @@ fn parse_args() -> Result<Options> {
         out: None,
         compare: false,
         judge: false,
+        check: false,
         rest: Vec::new(),
     };
     let mut positional = Vec::new();
@@ -158,6 +162,7 @@ fn parse_args() -> Result<Options> {
             }
             "--compare" => o.compare = true,
             "--judge" => o.judge = true,
+            "--check" => o.check = true,
             "-h" | "--help" => {
                 println!("{HELP}");
                 std::process::exit(0);
@@ -455,6 +460,35 @@ fn record(o: &Options) -> Result<()> {
     }
 }
 
+/// `eval --check`: confirm the sheet and the recordings line up, without
+/// loading any models.
+fn check_cases(cases: &[evals::Case], dir: &Path) -> Result<()> {
+    let mut tags: std::collections::BTreeMap<&str, usize> = Default::default();
+    let mut missing = Vec::new();
+    let mut total_secs = 0.0;
+    for c in cases {
+        for t in &c.tags {
+            *tags.entry(t).or_default() += 1;
+        }
+        match Clip::from_wav(&evals::audio_path(dir, c)) {
+            Ok(clip) => total_secs += clip.duration_secs(),
+            Err(_) => missing.push(c.file.as_str()),
+        }
+    }
+    println!("{} case(s), {:.1} min of audio", cases.len(), total_secs / 60.0);
+    let counts: Vec<String> = tags.iter().map(|(t, n)| format!("{t} ({n})")).collect();
+    println!("Tags: {}", if counts.is_empty() { "none".into() } else { counts.join(", ") });
+    let untagged: Vec<&str> = cases.iter().filter(|c| c.tags.is_empty()).map(|c| c.file.as_str()).collect();
+    if !untagged.is_empty() {
+        println!("No tags: {}", untagged.join(", "));
+    }
+    if !missing.is_empty() {
+        bail!("Missing or unreadable recordings: {}", missing.join(", "));
+    }
+    println!("The sheet and the recordings line up.");
+    Ok(())
+}
+
 /// One more than the highest numbered clip ("007.wav", "012-names.wav").
 fn next_case_number(dir: &Path) -> u32 {
     let numbers = std::fs::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| {
@@ -485,6 +519,9 @@ fn eval(o: &Options) -> Result<()> {
         .collect();
     if cases.is_empty() {
         bail!("No cases to run. Add rows to {} (see eval\\README.md).", cases_path.display());
+    }
+    if o.check {
+        return check_cases(&cases, &dir);
     }
 
     let variants: Vec<evals::Variant> = if o.compare {
