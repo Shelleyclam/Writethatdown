@@ -11,5 +11,6 @@ pub mod hotkey;
 pub mod notes;
 pub mod ollama;
 pub mod paste;
+pub mod pipeline;
 pub mod storage;
 pub mod transcribe;

@@ -15,8 +15,9 @@
 use crate::audio::{Clip, Recorder};
 use crate::cleanup::Cleaner;
 use crate::hotkey::{self, Key, KeyEvent, Press};
-use crate::notes::{split_file_under, NoteTaker};
+use crate::notes::NoteTaker;
 use crate::paste;
+use crate::pipeline;
 use crate::storage::Storage;
 use crate::transcribe::{find_model, Transcriber};
 use anyhow::{bail, Result};
@@ -181,19 +182,19 @@ pub fn run(config: Config, mut emit: impl FnMut(Event)) -> Result<()> {
             cleanup_secs: None,
         };
 
+        let processed = pipeline::process(&raw, mode, cleaner.as_ref(), || emit(Event::CleaningUp { mode }));
+        done.cleaned_text = processed.text;
+        done.cleanup_secs = processed.cleanup_secs;
+        if let Some(message) = processed.warning {
+            // A pasted dictation that fell back to raw reports no cleanup time.
+            if mode == Mode::Paste {
+                done.cleanup_secs = None;
+            }
+            emit(Event::Warning { message });
+        }
+
         match mode {
             Mode::Paste => {
-                if let Some(c) = &cleaner {
-                    emit(Event::CleaningUp { mode });
-                    let started = Instant::now();
-                    match c.clean(&raw) {
-                        Ok(text) => {
-                            done.cleaned_text = text;
-                            done.cleanup_secs = Some(started.elapsed().as_secs_f32());
-                        }
-                        Err(e) => emit(Event::Warning { message: format!("{e:#}") }),
-                    }
-                }
                 if config.paste {
                     match paste::paste(&done.cleaned_text) {
                         Ok(()) => done.pasted = true,
@@ -210,22 +211,8 @@ pub fn run(config: Config, mut emit: impl FnMut(Event)) -> Result<()> {
             Mode::Note => {
                 // next_clip only returns notes when both exist.
                 let (Some(taker), Some(s)) = (&note_taker, &storage) else { continue };
-                let (body, category) = split_file_under(&raw);
-                done.cleaned_text = body.clone();
-                if let Some(c) = &cleaner {
-                    emit(Event::CleaningUp { mode });
-                    let started = Instant::now();
-                    let (text, failed) = c.clean_long(&body);
-                    if failed > 0 {
-                        emit(Event::Warning {
-                            message: format!("Cleanup kept the raw text for {failed} part(s) of the note"),
-                        });
-                    }
-                    done.cleaned_text = text;
-                    done.cleanup_secs = Some(started.elapsed().as_secs_f32());
-                }
                 emit(Event::Filing);
-                match taker.file(s, &raw, &done.cleaned_text, done.source_app.as_deref(), category) {
+                match taker.file(s, &raw, &done.cleaned_text, done.source_app.as_deref(), processed.category) {
                     Ok(filed) => {
                         for message in filed.warnings {
                             emit(Event::Warning { message });
