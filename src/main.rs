@@ -8,6 +8,7 @@
 //!   whisperflow note <text...>      file a typed note (category + search index)
 //!   whisperflow ask <question...>   ask a question about your notes
 //!   whisperflow reindex             index notes that aren't searchable yet
+//!   whisperflow record [name]       record eval cases into eval\cases (Right Ctrl, like dictating)
 //!
 //! Notes use the desktop app's database.
 //!
@@ -43,6 +44,7 @@ Usage:
   whisperflow note <text...>      file a typed note (category + search index)
   whisperflow ask <question...>   ask a question about your notes
   whisperflow reindex             index notes that aren't searchable yet
+  whisperflow record [name]       record eval cases into eval\\cases (Right Ctrl, like dictating)
 
 Notes use the desktop app's database.
 
@@ -54,6 +56,9 @@ Options:
   --no-paste        only print the text, don't paste it
   --notes           also hold Right Alt to dictate notes (saved in the app's database)
   --save-wav        keep each recording in recordings\\ (for debugging)";
+
+/// Where `record` saves clips and `eval` looks for them.
+const EVAL_CASES_DIR: &str = "eval/cases";
 
 /// Models compared by `bench-cleanup` when none are named.
 const CLEANUP_CANDIDATES: &[&str] = &["qwen2.5:1.5b", "qwen2.5:3b"];
@@ -163,6 +168,7 @@ fn real_main() -> Result<()> {
             Ok(())
         }
         "bench-cleanup" => bench_cleanup(&o),
+        "record" => record(&o),
         "note" => add_note(&o),
         "ask" => ask(&o),
         "reindex" => {
@@ -170,7 +176,7 @@ fn real_main() -> Result<()> {
             println!("Indexed {n} chunk(s).");
             Ok(())
         }
-        other => bail!("Unknown command '{other}'. Try: run, bench, file, clean, bench-cleanup, note, ask, reindex"),
+        other => bail!("Unknown command '{other}'. Try: run, bench, file, clean, bench-cleanup, note, ask, reindex, record"),
     }
 }
 
@@ -370,6 +376,53 @@ fn bench_cleanup(o: &Options) -> Result<()> {
         println!("  {name:<16} {avg:.2}");
     }
     Ok(())
+}
+
+/// Record eval cases into `eval\cases`. With a name, records one clip;
+/// without, saves every recording as the next number until Ctrl+C.
+/// The transcript is deliberately not shown: the reference text should come
+/// from listening back, not from what Whisper heard.
+fn record(o: &Options) -> Result<()> {
+    let dir = Path::new(EVAL_CASES_DIR);
+    let name = o.rest.first().map(|n| n.trim_end_matches(".wav").to_string());
+    if let Some(n) = &name {
+        if n.is_empty() || !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            bail!("Use only letters, digits, - and _ in the name, e.g. 012-names");
+        }
+        let path = dir.join(format!("{n}.wav"));
+        if path.exists() {
+            bail!("{} already exists. Pick another name or delete it first.", path.display());
+        }
+    }
+
+    let mut rec = Recorder::new()?;
+    let keys = hotkey::listen(false)?;
+    println!("Microphone: {}", rec.device_name());
+    println!("Quit the Writethatdown app first, or it will paste what you say.");
+    println!("{}  Ctrl+C to quit.", hotkey::describe());
+    loop {
+        let Some((_, clip)) = engine::next_clip(&mut rec, &keys, &mut print_event)? else { continue };
+        let file = match &name {
+            Some(n) => format!("{n}.wav"),
+            None => format!("{:03}.wav", next_case_number(dir)),
+        };
+        let path = dir.join(&file);
+        clip.save_wav(&path)?;
+        println!("  saved {} ({:.1}s). Add a row for {file} to eval\\cases.csv.", path.display(), clip.duration_secs());
+        if name.is_some() {
+            return Ok(());
+        }
+    }
+}
+
+/// One more than the highest numbered clip ("007.wav", "012-names.wav").
+fn next_case_number(dir: &Path) -> u32 {
+    let numbers = std::fs::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let digits: String = name.chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse::<u32>().ok()
+    });
+    numbers.max().unwrap_or(0) + 1
 }
 
 fn add_note(o: &Options) -> Result<()> {
