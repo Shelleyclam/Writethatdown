@@ -7,6 +7,7 @@ pub mod ask;
 pub mod audio;
 pub mod cleanup;
 pub mod engine;
+pub mod eval;
 pub mod hotkey;
 pub mod notes;
 pub mod ollama;
