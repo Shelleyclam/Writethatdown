@@ -6,6 +6,7 @@
 //! listening back), what should have been pasted, and free-form tags.
 
 pub mod csv;
+pub mod judge;
 pub mod metrics;
 pub mod report;
 
@@ -158,6 +159,8 @@ pub struct CaseResult {
     pub total_ms: f64,
     /// Why cleanup kept the raw text, if it did.
     pub warning: Option<String>,
+    /// The judge model's verdict (`--judge`, cleanup variants only).
+    pub judge: Option<judge::Verdict>,
 }
 
 pub fn audio_path(dir: &Path, case: &Case) -> PathBuf {
@@ -219,12 +222,34 @@ pub fn run(
                 cleanup_ms,
                 total_ms: transcribe_ms + cleanup_ms.unwrap_or(0.0),
                 warning: out.warning,
+                judge: None,
             });
         }
         let latest: Vec<CaseResult> = results.iter().map(|r| r.last().unwrap().clone()).collect();
         progress(i, &latest);
     }
     Ok(results)
+}
+
+/// Ask the judge about every case that went through cleanup. A case the
+/// judge can't answer keeps no verdict; `progress` gets each one's error.
+pub fn judge_all(
+    results: &mut [Vec<CaseResult>],
+    variants: &[Variant],
+    judge: &judge::Judge,
+    mut progress: impl FnMut(&CaseResult, Result<&judge::Verdict, &anyhow::Error>),
+) {
+    for (rs, _) in results.iter_mut().zip(variants).filter(|(_, v)| v.cleanup) {
+        for r in rs.iter_mut() {
+            match judge.judge(&r.raw, &r.wanted, &r.text) {
+                Ok(v) => {
+                    r.judge = Some(v);
+                    progress(r, Ok(r.judge.as_ref().unwrap()));
+                }
+                Err(e) => progress(r, Err(&e)),
+            }
+        }
+    }
 }
 
 /// p50 and p95 in milliseconds.
@@ -250,6 +275,8 @@ pub struct Summary {
     pub final_wer: Wer,
     /// Cases flagged for meaning drift; `None` when cleanup didn't run.
     pub drift_flagged: Option<usize>,
+    /// Cases the judge said lost meaning, and how many it judged.
+    pub judge_failed: Option<(usize, usize)>,
     pub transcribe_ms: Option<Latency>,
     pub cleanup_ms: Option<Latency>,
     pub total_ms: Option<Latency>,
@@ -277,6 +304,7 @@ pub fn summarize(results: &[CaseResult]) -> Vec<Summary> {
 fn summary(group: &str, rs: Vec<&CaseResult>) -> Summary {
     let cleaned: Vec<f64> = rs.iter().filter_map(|r| r.cleanup_ms).collect();
     let drifts: Vec<&Drift> = rs.iter().filter_map(|r| r.drift.as_ref()).collect();
+    let verdicts: Vec<&judge::Verdict> = rs.iter().filter_map(|r| r.judge.as_ref()).collect();
     Summary {
         group: group.to_string(),
         cases: rs.len(),
@@ -284,6 +312,8 @@ fn summary(group: &str, rs: Vec<&CaseResult>) -> Summary {
         raw_wer: rs.iter().map(|r| r.raw_wer).sum(),
         final_wer: rs.iter().map(|r| r.final_wer).sum(),
         drift_flagged: (!drifts.is_empty()).then(|| drifts.iter().filter(|d| d.flagged).count()),
+        judge_failed: (!verdicts.is_empty())
+            .then(|| (verdicts.iter().filter(|v| !v.preserved).count(), verdicts.len())),
         transcribe_ms: Latency::of(&rs.iter().map(|r| r.transcribe_ms).collect::<Vec<_>>()),
         cleanup_ms: Latency::of(&cleaned),
         total_ms: Latency::of(&rs.iter().map(|r| r.total_ms).collect::<Vec<_>>()),
@@ -354,6 +384,7 @@ mod tests {
             cleanup_ms: None,
             total_ms,
             warning: None,
+            judge: None,
         }
     }
 

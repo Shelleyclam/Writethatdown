@@ -26,6 +26,7 @@
 //!   --cases <file>    the cases sheet (default: eval\cases.csv)
 //!   --tags <a,b>      only cases with any of these tags
 //!   --compare         run with and without cleanup, side by side
+//!   --judge           also ask qwen2.5:7b whether cleanup kept the meaning (slow)
 //!   --out <file>      where to write the results JSON
 
 use anyhow::{anyhow, bail, Result};
@@ -70,6 +71,7 @@ Eval options:
   --cases <file>    the cases sheet (default: eval\\cases.csv)
   --tags <a,b>      only cases with any of these tags
   --compare         run with and without cleanup, side by side
+  --judge           also ask qwen2.5:7b whether cleanup kept the meaning (slow)
   --out <file>      where to write the results JSON";
 
 /// Where `record` saves clips and `eval` looks for them.
@@ -108,6 +110,7 @@ struct Options {
     tags: Vec<String>,
     out: Option<PathBuf>,
     compare: bool,
+    judge: bool,
     /// Positional arguments after the command.
     rest: Vec<String>,
 }
@@ -129,6 +132,7 @@ fn parse_args() -> Result<Options> {
         tags: Vec::new(),
         out: None,
         compare: false,
+        judge: false,
         rest: Vec::new(),
     };
     let mut positional = Vec::new();
@@ -153,6 +157,7 @@ fn parse_args() -> Result<Options> {
                 o.tags.extend(value.split(',').map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()));
             }
             "--compare" => o.compare = true,
+            "--judge" => o.judge = true,
             "-h" | "--help" => {
                 println!("{HELP}");
                 std::process::exit(0);
@@ -492,6 +497,9 @@ fn eval(o: &Options) -> Result<()> {
         vec![evals::Variant { name: name.into(), cleanup: o.cleanup }]
     };
 
+    if o.judge && !variants.iter().any(|v| v.cleanup) {
+        bail!("--judge checks what cleanup did, so it can't be combined with --no-cleanup");
+    }
     let transcriber = load(&find_model(o.model.as_deref())?, o.threads)?;
     let cleaner = if variants.iter().any(|v| v.cleanup) {
         let c = Cleaner::new(&o.llm);
@@ -504,7 +512,7 @@ fn eval(o: &Options) -> Result<()> {
     };
 
     println!("Running {} case(s)...", cases.len());
-    let results = evals::run(&cases, &dir, &transcriber, cleaner.as_ref(), &variants, |i, rs| {
+    let mut results = evals::run(&cases, &dir, &transcriber, cleaner.as_ref(), &variants, |i, rs| {
         let finals: Vec<String> = rs
             .iter()
             .zip(&variants)
@@ -523,6 +531,20 @@ fn eval(o: &Options) -> Result<()> {
             finals.join(", ")
         );
     })?;
+
+    if o.judge {
+        // Free the cleanup model's memory before loading the 7B judge.
+        if let Some(c) = &cleaner {
+            let _ = Ollama::new(None).load(&c.model, "0");
+        }
+        let judge = evals::judge::Judge::new(evals::judge::MODEL);
+        println!("\nJudging with {} (the first case loads the model)...", judge.model);
+        evals::judge_all(&mut results, &variants, &judge, |r, verdict| match verdict {
+            Ok(v) if v.preserved => println!("  {:<16} kept meaning", r.file),
+            Ok(v) => println!("  {:<16} LOST MEANING: {}", r.file, v.reason),
+            Err(e) => eprintln!("  {:<16} no verdict: {e:#}", r.file),
+        });
+    }
 
     let now = chrono::Local::now();
     let report = evals::Report {

@@ -88,10 +88,19 @@ message, so you can record first and fill in the sheet later.
 .\target\release\whisperflow.exe eval --no-cleanup       # Whisper only
 .\target\release\whisperflow.exe eval --model small.en   # another Whisper model
 .\target\release\whisperflow.exe eval --tags names,note  # only cases with these tags
+.\target\release\whisperflow.exe eval --judge            # also ask qwen2.5:7b about meaning
 ```
 
 Cleanup needs Ollama running. If it isn't, the eval stops instead of quietly measuring
 the raw text.
+
+`--judge` gives a second opinion on drift: after the run, qwen2.5:7b reads what Whisper
+heard, what you wanted, and what cleanup produced, and answers whether cleanup kept the
+meaning, with a one-sentence reason. It adds a few seconds per case (about 30 seconds
+more for the first, while the model loads). It's reported next to the word-based drift
+check, not instead of it: a language model's verdicts vary with wording, and its reason
+sometimes contradicts its own verdict. Where the two disagree, read the case yourself in
+the per-case CSV.
 
 ## 4. Read the results
 

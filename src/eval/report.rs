@@ -15,6 +15,15 @@ fn drift(s: &Summary) -> String {
     s.drift_flagged.map(|n| format!("{n} / {}", s.cases)).unwrap_or_else(|| "-".into())
 }
 
+fn judged(s: &Summary) -> String {
+    s.judge_failed.map(|(failed, of)| format!("{failed} / {of}")).unwrap_or_else(|| "-".into())
+}
+
+/// Whether the judge ran, so its column is only shown when it did.
+fn has_judge(report: &Report) -> bool {
+    report.variants.iter().any(|v| v.summary[0].judge_failed.is_some())
+}
+
 /// A table as aligned text (`markdown: false`) or as a Markdown table.
 fn table(headers: &[&str], rows: &[Vec<String>], markdown: bool) -> String {
     let widths: Vec<usize> = (0..headers.len())
@@ -47,25 +56,25 @@ fn table(headers: &[&str], rows: &[Vec<String>], markdown: bool) -> String {
     out
 }
 
-const SUMMARY_HEADERS: [&str; 8] =
-    ["Group", "Cases", "Raw WER", "Final WER", "Drift", "Transcribe p50 / p95", "Cleanup p50 / p95", "Total p50 / p95"];
-
-fn summary_rows(summary: &[Summary]) -> Vec<Vec<String>> {
-    summary
+fn summary_table(summary: &[Summary], with_judge: bool, markdown: bool) -> String {
+    let mut headers = vec!["Group", "Cases", "Raw WER", "Final WER", "Drift"];
+    if with_judge {
+        headers.push("Judge: lost meaning");
+    }
+    headers.extend(["Transcribe p50 / p95", "Cleanup p50 / p95", "Total p50 / p95"]);
+    let rows: Vec<Vec<String>> = summary
         .iter()
         .map(|s| {
-            vec![
-                s.group.clone(),
-                s.cases.to_string(),
-                percent(s.raw_wer.rate()),
-                percent(s.final_wer.rate()),
-                drift(s),
-                latency(s.transcribe_ms),
-                latency(s.cleanup_ms),
-                latency(s.total_ms),
-            ]
+            let mut row =
+                vec![s.group.clone(), s.cases.to_string(), percent(s.raw_wer.rate()), percent(s.final_wer.rate()), drift(s)];
+            if with_judge {
+                row.push(judged(s));
+            }
+            row.extend([latency(s.transcribe_ms), latency(s.cleanup_ms), latency(s.total_ms)]);
+            row
         })
-        .collect()
+        .collect();
+    table(&headers, &rows, markdown)
 }
 
 /// Variants side by side: the "all" row of each, then final WER per group.
@@ -75,10 +84,20 @@ fn comparison(report: &Report, markdown: bool) -> String {
         .iter()
         .map(|v| {
             let all = &v.summary[0];
-            vec![v.variant.name.clone(), percent(all.final_wer.rate()), drift(all), latency(all.total_ms)]
+            let mut row = vec![v.variant.name.clone(), percent(all.final_wer.rate()), drift(all)];
+            if has_judge(report) {
+                row.push(judged(all));
+            }
+            row.push(latency(all.total_ms));
+            row
         })
         .collect();
-    let mut out = table(&["Variant", "Final WER", "Drift", "Total p50 / p95"], &overall, markdown);
+    let mut headers = vec!["Variant", "Final WER", "Drift"];
+    if has_judge(report) {
+        headers.push("Judge: lost meaning");
+    }
+    headers.push("Total p50 / p95");
+    let mut out = table(&headers, &overall, markdown);
 
     let mut headers = vec!["Final WER by group".to_string()];
     headers.extend(report.variants.iter().map(|v| v.variant.name.clone()));
@@ -116,7 +135,7 @@ pub fn text(report: &Report) -> String {
     let mut out = format!("\n{}\n", header_line(report));
     for v in &report.variants {
         out.push_str(&format!("\n{}\n", v.variant.name));
-        out.push_str(&table(&SUMMARY_HEADERS, &summary_rows(&v.summary), false));
+        out.push_str(&summary_table(&v.summary, has_judge(report), false));
     }
     if report.variants.len() > 1 {
         out.push_str("\nComparison\n");
@@ -134,12 +153,20 @@ pub fn markdown(report: &Report) -> String {
          - **Drift**: cases where cleanup added or dropped content words that the wanted text doesn't \
          explain (see `src/eval/metrics.rs`).\n\
          - **Times** are per dictation on the CPU, in milliseconds (p50 = median, p95 = 95th percentile; \
-         with few cases, p95 is close to the slowest case).\n",
-        header_line(report)
+         with few cases, p95 is close to the slowest case).\n{}",
+        header_line(report),
+        if has_judge(report) {
+            format!(
+                "- **Judge: lost meaning**: cases where {} said cleanup changed the meaning, out of those it judged.\n",
+                super::judge::MODEL
+            )
+        } else {
+            String::new()
+        }
     );
     for v in &report.variants {
         out.push_str(&format!("\n## {}\n\n", v.variant.name));
-        out.push_str(&table(&SUMMARY_HEADERS, &summary_rows(&v.summary), true));
+        out.push_str(&summary_table(&v.summary, has_judge(report), true));
     }
     if report.variants.len() > 1 {
         out.push_str("\n## Comparison\n\n");
@@ -155,7 +182,7 @@ pub fn cases_csv(results: &[CaseResult]) -> String {
     out.push_str(&csv::row(
         &[
             "file", "tags", "audio_s", "said", "raw", "raw_wer", "wanted", "final", "final_wer", "drift",
-            "drift_words", "transcribe_ms", "cleanup_ms", "total_ms", "warning",
+            "drift_words", "judge", "judge_reason", "transcribe_ms", "cleanup_ms", "total_ms", "warning",
         ]
         .map(String::from),
     ));
@@ -181,6 +208,8 @@ pub fn cases_csv(results: &[CaseResult]) -> String {
             percent(r.final_wer.rate()),
             r.drift.as_ref().map(|d| if d.flagged { "yes" } else { "no" }).unwrap_or("-").to_string(),
             drift_words,
+            r.judge.as_ref().map(|v| if v.preserved { "kept meaning" } else { "lost meaning" }).unwrap_or("").to_string(),
+            r.judge.as_ref().map(|v| v.reason.clone()).unwrap_or_default(),
             format!("{:.0}", r.transcribe_ms),
             r.cleanup_ms.map(|ms| format!("{ms:.0}")).unwrap_or_default(),
             format!("{:.0}", r.total_ms),
