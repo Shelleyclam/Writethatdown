@@ -9,6 +9,7 @@
 //!   whisperflow ask <question...>   ask a question about your notes
 //!   whisperflow reindex             index notes that aren't searchable yet
 //!   whisperflow record [name]       record eval cases into eval\cases (Right Ctrl, like dictating)
+//!   whisperflow eval                run the eval cases and measure accuracy and speed
 //!
 //! Notes use the desktop app's database.
 //!
@@ -20,6 +21,12 @@
 //!   --no-paste        only print the text, don't paste it
 //!   --notes           also hold Right Alt to dictate notes (saved in the app's database)
 //!   --save-wav        keep each recording in recordings\ (for debugging)
+//!
+//! Eval options:
+//!   --cases <file>    the cases sheet (default: eval\cases.csv)
+//!   --tags <a,b>      only cases with any of these tags
+//!   --compare         run with and without cleanup, side by side
+//!   --out <file>      where to write the results JSON
 
 use anyhow::{anyhow, bail, Result};
 use std::path::{Path, PathBuf};
@@ -27,6 +34,7 @@ use std::time::Instant;
 use whisperflow::audio::{Clip, Recorder};
 use whisperflow::cleanup::{self, Cleaner};
 use whisperflow::engine::{self, Event};
+use whisperflow::eval as evals;
 use whisperflow::hotkey;
 use whisperflow::notes::{split_file_under, NoteTaker};
 use whisperflow::ollama::Ollama;
@@ -45,6 +53,7 @@ Usage:
   whisperflow ask <question...>   ask a question about your notes
   whisperflow reindex             index notes that aren't searchable yet
   whisperflow record [name]       record eval cases into eval\\cases (Right Ctrl, like dictating)
+  whisperflow eval                run the eval cases and measure accuracy and speed (see eval\\README.md)
 
 Notes use the desktop app's database.
 
@@ -55,10 +64,18 @@ Options:
   --no-cleanup      skip the cleanup pass, use the raw transcript
   --no-paste        only print the text, don't paste it
   --notes           also hold Right Alt to dictate notes (saved in the app's database)
-  --save-wav        keep each recording in recordings\\ (for debugging)";
+  --save-wav        keep each recording in recordings\\ (for debugging)
+
+Eval options:
+  --cases <file>    the cases sheet (default: eval\\cases.csv)
+  --tags <a,b>      only cases with any of these tags
+  --compare         run with and without cleanup, side by side
+  --out <file>      where to write the results JSON";
 
 /// Where `record` saves clips and `eval` looks for them.
 const EVAL_CASES_DIR: &str = "eval/cases";
+/// The eval's cases sheet; recordings are in `cases` next to it.
+const EVAL_CASES_FILE: &str = "eval/cases.csv";
 
 /// Models compared by `bench-cleanup` when none are named.
 const CLEANUP_CANDIDATES: &[&str] = &["qwen2.5:1.5b", "qwen2.5:3b"];
@@ -85,6 +102,12 @@ struct Options {
     cleanup: bool,
     llm: String,
     notes: bool,
+    /// eval: the cases sheet, tags to keep, where to write the JSON, and
+    /// whether to compare with and without cleanup.
+    cases: Option<PathBuf>,
+    tags: Vec<String>,
+    out: Option<PathBuf>,
+    compare: bool,
     /// Positional arguments after the command.
     rest: Vec<String>,
 }
@@ -102,6 +125,10 @@ fn parse_args() -> Result<Options> {
         cleanup: true,
         llm: cleanup::DEFAULT_MODEL.into(),
         notes: false,
+        cases: None,
+        tags: Vec::new(),
+        out: None,
+        compare: false,
         rest: Vec::new(),
     };
     let mut positional = Vec::new();
@@ -119,6 +146,13 @@ fn parse_args() -> Result<Options> {
             "--no-cleanup" => o.cleanup = false,
             "--notes" => o.notes = true,
             "--llm" => o.llm = args.next().ok_or_else(|| anyhow!("--llm needs a value"))?,
+            "--cases" => o.cases = Some(args.next().ok_or_else(|| anyhow!("--cases needs a file"))?.into()),
+            "--out" => o.out = Some(args.next().ok_or_else(|| anyhow!("--out needs a file"))?.into()),
+            "--tags" => {
+                let value = args.next().ok_or_else(|| anyhow!("--tags needs a value, e.g. names,filler"))?;
+                o.tags.extend(value.split(',').map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()));
+            }
+            "--compare" => o.compare = true,
             "-h" | "--help" => {
                 println!("{HELP}");
                 std::process::exit(0);
@@ -169,6 +203,7 @@ fn real_main() -> Result<()> {
         }
         "bench-cleanup" => bench_cleanup(&o),
         "record" => record(&o),
+        "eval" => eval(&o),
         "note" => add_note(&o),
         "ask" => ask(&o),
         "reindex" => {
@@ -176,7 +211,7 @@ fn real_main() -> Result<()> {
             println!("Indexed {n} chunk(s).");
             Ok(())
         }
-        other => bail!("Unknown command '{other}'. Try: run, bench, file, clean, bench-cleanup, note, ask, reindex, record"),
+        other => bail!("Unknown command '{other}'. Try: run, bench, file, clean, bench-cleanup, note, ask, reindex, record, eval"),
     }
 }
 
@@ -423,6 +458,104 @@ fn next_case_number(dir: &Path) -> u32 {
         digits.parse::<u32>().ok()
     });
     numbers.max().unwrap_or(0) + 1
+}
+
+/// Run the eval cases and write the terminal table, the results JSON, a
+/// per-case CSV for each variant, and `eval\RESULTS.md`.
+fn eval(o: &Options) -> Result<()> {
+    let cases_path = o.cases.clone().unwrap_or_else(|| PathBuf::from(EVAL_CASES_FILE));
+    let dir = cases_path.parent().unwrap_or(Path::new(".")).join("cases");
+    let loaded = evals::load_cases(&cases_path)?;
+    for s in &loaded.skipped {
+        eprintln!("  skipped {s}");
+    }
+    let unlisted = evals::recordings_without_rows(&dir, &loaded.cases);
+    if !unlisted.is_empty() {
+        eprintln!("  not in {}: {}", cases_path.display(), unlisted.join(", "));
+    }
+    let cases: Vec<evals::Case> = loaded
+        .cases
+        .into_iter()
+        .filter(|c| o.tags.is_empty() || c.tags.iter().any(|t| o.tags.contains(t)))
+        .collect();
+    if cases.is_empty() {
+        bail!("No cases to run. Add rows to {} (see eval\\README.md).", cases_path.display());
+    }
+
+    let variants: Vec<evals::Variant> = if o.compare {
+        vec![
+            evals::Variant { name: "whisper only".into(), cleanup: false },
+            evals::Variant { name: "with cleanup".into(), cleanup: true },
+        ]
+    } else {
+        let name = if o.cleanup { "with cleanup" } else { "whisper only" };
+        vec![evals::Variant { name: name.into(), cleanup: o.cleanup }]
+    };
+
+    let transcriber = load(&find_model(o.model.as_deref())?, o.threads)?;
+    let cleaner = if variants.iter().any(|v| v.cleanup) {
+        let c = Cleaner::new(&o.llm);
+        // Measuring "with cleanup" without it would silently report raw text.
+        c.warm_up()
+            .map_err(|e| anyhow!("Cleanup model not available ({e:#}). Start Ollama, or pass --no-cleanup."))?;
+        Some(c)
+    } else {
+        None
+    };
+
+    println!("Running {} case(s)...", cases.len());
+    let results = evals::run(&cases, &dir, &transcriber, cleaner.as_ref(), &variants, |i, rs| {
+        let finals: Vec<String> = rs
+            .iter()
+            .zip(&variants)
+            .map(|(r, v)| {
+                let drift = if r.drift.as_ref().is_some_and(|d| d.flagged) { ", drift" } else { "" };
+                format!("{} {:.0}%{drift}", v.name, r.final_wer.rate() * 100.0)
+            })
+            .collect();
+        println!(
+            "  [{:>2}/{}] {:<16} {:>5.1}s  raw WER {:>3.0}%  final WER: {}",
+            i + 1,
+            cases.len(),
+            rs[0].file,
+            rs[0].audio_secs,
+            rs[0].raw_wer.rate() * 100.0,
+            finals.join(", ")
+        );
+    })?;
+
+    let now = chrono::Local::now();
+    let report = evals::Report {
+        generated_at: now.format("%Y-%m-%d %H:%M").to_string(),
+        whisper_model: transcriber.name.clone(),
+        threads: o.threads,
+        cleanup_model: cleaner.as_ref().map(|c| c.model.clone()),
+        cases_file: cases_path.display().to_string(),
+        cases: cases.len(),
+        audio_secs: results[0].iter().map(|r| r.audio_secs).sum(),
+        variants: variants
+            .into_iter()
+            .zip(results)
+            .map(|(variant, cases)| evals::VariantReport { summary: evals::summarize(&cases), variant, cases })
+            .collect(),
+    };
+    print!("{}", evals::report::text(&report));
+
+    let results_dir = cases_path.parent().unwrap_or(Path::new(".")).join("results");
+    std::fs::create_dir_all(&results_dir)?;
+    let stem = format!("{}-{}", now.format("%Y-%m-%d_%H%M"), report.whisper_model);
+    let json_path = o.out.clone().unwrap_or_else(|| results_dir.join(format!("{stem}.json")));
+    std::fs::write(&json_path, serde_json::to_string_pretty(&report)?)?;
+    println!("\nResults: {}", json_path.display());
+    for v in &report.variants {
+        let path = results_dir.join(format!("{stem}-{}.csv", v.variant.name.replace(' ', "-")));
+        std::fs::write(&path, evals::report::cases_csv(&v.cases))?;
+        println!("Per case: {}", path.display());
+    }
+    let md_path = cases_path.parent().unwrap_or(Path::new(".")).join("RESULTS.md");
+    std::fs::write(&md_path, evals::report::markdown(&report))?;
+    println!("Summary: {}", md_path.display());
+    Ok(())
 }
 
 fn add_note(o: &Options) -> Result<()> {
