@@ -97,7 +97,11 @@ To check the sheet against the recordings without running any models:
 .\target\release\whisperflow.exe eval --model small.en   # another Whisper model
 .\target\release\whisperflow.exe eval --tags names,note  # only cases with these tags
 .\target\release\whisperflow.exe eval --judge            # also ask qwen2.5:7b about meaning
+.\target\release\whisperflow.exe eval --show             # print said / heard / wanted / pasted per case
 ```
+
+Runs limited with `--tags` don't update `eval\RESULTS.md`, so a quick look at a few cases
+never replaces the full summary.
 
 Cleanup needs Ollama running. If it isn't, the eval stops instead of quietly measuring
 the raw text.

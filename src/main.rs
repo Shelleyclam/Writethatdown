@@ -28,6 +28,7 @@
 //!   --compare         run with and without cleanup, side by side
 //!   --judge           also ask qwen2.5:7b whether cleanup kept the meaning (slow)
 //!   --check           only check the sheet against the recordings
+//!   --show            print every text per case: said, heard, wanted, pasted
 //!   --out <file>      where to write the results JSON
 
 use anyhow::{anyhow, bail, Result};
@@ -74,6 +75,7 @@ Eval options:
   --compare         run with and without cleanup, side by side
   --judge           also ask qwen2.5:7b whether cleanup kept the meaning (slow)
   --check           only check the sheet against the recordings
+  --show            print every text per case: said, heard, wanted, pasted
   --out <file>      where to write the results JSON";
 
 /// Where `record` saves clips and `eval` looks for them.
@@ -114,6 +116,7 @@ struct Options {
     compare: bool,
     judge: bool,
     check: bool,
+    show: bool,
     /// Positional arguments after the command.
     rest: Vec<String>,
 }
@@ -137,6 +140,7 @@ fn parse_args() -> Result<Options> {
         compare: false,
         judge: false,
         check: false,
+        show: false,
         rest: Vec::new(),
     };
     let mut positional = Vec::new();
@@ -163,6 +167,7 @@ fn parse_args() -> Result<Options> {
             "--compare" => o.compare = true,
             "--judge" => o.judge = true,
             "--check" => o.check = true,
+            "--show" => o.show = true,
             "-h" | "--help" => {
                 println!("{HELP}");
                 std::process::exit(0);
@@ -460,6 +465,30 @@ fn record(o: &Options) -> Result<()> {
     }
 }
 
+/// `eval --show`: every text for one case, so the model's output can be read
+/// next to what was said and wanted.
+fn show_case(rs: &[evals::CaseResult], variants: &[evals::Variant]) {
+    let first = &rs[0];
+    println!("      said:    {}", first.said);
+    println!("      heard:   {}", first.raw);
+    println!("      wanted:  {}", first.wanted);
+    for (r, v) in rs.iter().zip(variants) {
+        if !v.cleanup {
+            continue;
+        }
+        println!("      pasted:  {}", r.text);
+        if let Some(d) = r.drift.as_ref().filter(|d| !d.dropped.is_empty() || !d.added.is_empty()) {
+            let mut words: Vec<String> = d.dropped.iter().map(|w| format!("-{w}")).collect();
+            words.extend(d.added.iter().map(|w| format!("+{w}")));
+            println!("      drift:   {}{}", words.join(" "), if d.flagged { "  (flagged)" } else { "" });
+        }
+        if let Some(w) = &r.warning {
+            println!("      note:    {w}");
+        }
+    }
+    println!();
+}
+
 /// `eval --check`: confirm the sheet and the recordings line up, without
 /// loading any models.
 fn check_cases(cases: &[evals::Case], dir: &Path) -> Result<()> {
@@ -567,6 +596,9 @@ fn eval(o: &Options) -> Result<()> {
             rs[0].raw_wer.rate() * 100.0,
             finals.join(", ")
         );
+        if o.show {
+            show_case(rs, &variants);
+        }
     })?;
 
     if o.judge {
@@ -612,8 +644,13 @@ fn eval(o: &Options) -> Result<()> {
         println!("Per case: {}", path.display());
     }
     let md_path = cases_path.parent().unwrap_or(Path::new(".")).join("RESULTS.md");
-    std::fs::write(&md_path, evals::report::markdown(&report))?;
-    println!("Summary: {}", md_path.display());
+    if o.tags.is_empty() {
+        std::fs::write(&md_path, evals::report::markdown(&report))?;
+        println!("Summary: {}", md_path.display());
+    } else {
+        // A run on some of the cases shouldn't replace the full summary.
+        println!("{} not updated (only some cases were run)", md_path.display());
+    }
     Ok(())
 }
 
