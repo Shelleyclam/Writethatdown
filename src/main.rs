@@ -16,7 +16,7 @@
 //! Options:
 //!   --model <name>    e.g. base.en or small.en (default: base.en if present)
 //!   --threads <n>     CPU threads for Whisper (default: up to 8)
-//!   --llm <name>      Ollama model for cleanup (default: qwen2.5:1.5b)
+//!   --llm <name>      Ollama model for cleanup (default: qwen2.5:3b)
 //!   --no-cleanup      skip the cleanup pass, use the raw transcript
 //!   --no-paste        only print the text, don't paste it
 //!   --notes           also hold Right Alt to dictate notes (saved in the app's database)
@@ -63,7 +63,7 @@ Notes use the desktop app's database.
 Options:
   --model <name>    e.g. base.en or small.en (default: base.en if present)
   --threads <n>     CPU threads for Whisper (default: up to 8)
-  --llm <name>      Ollama model for cleanup (default: qwen2.5:1.5b)
+  --llm <name>      Ollama model for cleanup (default: qwen2.5:3b)
   --no-cleanup      skip the cleanup pass, use the raw transcript
   --no-paste        only print the text, don't paste it
   --notes           also hold Right Alt to dictate notes (saved in the app's database)

@@ -42,12 +42,12 @@ Built with Rust ([whisper.cpp](https://github.com/ggml-org/whisper.cpp) via
 ## Requirements
 
 - Windows 10 or 11, 64-bit.
-- 16 GB of RAM recommended. Dictation needs about 1.5 GB. The 7B model used for filing
-  notes and answering questions needs about 5 GB while loaded (it unloads 2 minutes
-  after use).
-- About 9 GB of disk for the models.
+- 16 GB of RAM recommended. Dictation needs about 3 GB (the cleanup model unloads
+  15 minutes after the last dictation). The 7B model used for filing notes and
+  answering questions needs about 5 GB while loaded (it unloads 2 minutes after use).
+- About 10 GB of disk for the models.
 - No GPU needed. On a 12th-gen Intel laptop CPU, a 10-second dictation takes about
-  1 second to transcribe and 1 second to clean up.
+  1 second to transcribe and 2 seconds to clean up.
 
 ## Setup
 
@@ -77,12 +77,12 @@ winget install Ollama.Ollama
 Then, in a new PowerShell window:
 
 ```powershell
-ollama pull qwen2.5:1.5b
+ollama pull qwen2.5:3b
 ollama pull qwen2.5:7b
 ollama pull nomic-embed-text
 ```
 
-`qwen2.5:1.5b` cleans up dictation, `qwen2.5:7b` files notes and answers questions, and
+`qwen2.5:3b` cleans up dictation, `qwen2.5:7b` files notes and answers questions, and
 `nomic-embed-text` makes notes searchable. To keep the models on another drive, set the
 `OLLAMA_MODELS` environment variable before pulling them.
 
@@ -156,7 +156,7 @@ benchmarking and debugging.
 | `reindex` | Make notes saved while Ollama was off searchable |
 | `--model <name>` | `base.en` or `small.en` (default: `base.en`) |
 | `--threads <n>` | CPU threads for Whisper (default: up to 8) |
-| `--llm <name>` | Ollama model for cleanup (default: `qwen2.5:1.5b`) |
+| `--llm <name>` | Ollama model for cleanup (default: `qwen2.5:3b`) |
 | `--no-cleanup` | Use the raw Whisper transcript |
 | `--notes` | Also use Right Alt for notes (saved in the app's database) |
 | `--no-paste` | Only print the text, don't paste it |

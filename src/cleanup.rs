@@ -9,12 +9,17 @@ use crate::ollama::{Message, Ollama, Options};
 use anyhow::{bail, Result};
 use std::time::Duration;
 
-/// Default cleanup model. Chosen with `whisperflow bench-cleanup`.
-pub const DEFAULT_MODEL: &str = "qwen2.5:1.5b";
+/// Default cleanup model, chosen with `whisperflow eval --llm`: with the
+/// same prompt and checks, qwen2.5:3b beat qwen2.5:1.5b on short dictations
+/// (final WER 13.9% vs 20.4%, where raw Whisper scores 18.2%) for about
+/// 0.4 s more per short dictation.
+pub const DEFAULT_MODEL: &str = "qwen2.5:3b";
 
 /// How long Ollama keeps the model in memory after the last request.
-/// Reloading it costs a second or two, so keep it around between dictations.
-const KEEP_ALIVE: &str = "60m";
+/// Reloading it costs a few seconds, so keep it between dictations, but give
+/// its ~2.3 GB back when dictation pauses: RAM is shared with the 7B notes
+/// model and a browser.
+const KEEP_ALIVE: &str = "15m";
 
 /// Transcripts this short gain nothing from cleanup, so skip the round trip.
 const MIN_WORDS: usize = 4;
