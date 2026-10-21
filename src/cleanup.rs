@@ -133,6 +133,15 @@ const CORRECTION_CUES: &[&[&str]] = &[
     &["make", "it"],
 ];
 
+/// Words that make a sentence negative ("n't" is spelled out as "not" by
+/// [`words`]). "No" is left out: it's mostly a self-correction ("no, no,
+/// make it 500") or an answer, not a negation of what follows.
+const NEGATIONS: &[&str] = &["not", "never", "nothing", "nobody", "none", "nowhere", "neither", "nor", "cannot"];
+
+fn is_negative(words: &[String]) -> bool {
+    words.iter().any(|w| NEGATIONS.contains(&w.as_str()))
+}
+
 fn has_correction_cue(words: &[String]) -> bool {
     CORRECTION_CUES
         .iter()
@@ -326,6 +335,12 @@ fn plausible(raw: &str, cleaned: &str) -> Result<(), &'static str> {
     if out_words.len() > raw_words.len() + MAX_EXTRA_WORDS {
         return Err("made the text longer");
     }
+    // Losing a "not" flips the meaning ("not much we can do" -> "anything we
+    // can do"). Only a self-correction may drop one; nothing may add one.
+    let (raw_negative, out_negative) = (is_negative(&raw_words), is_negative(&out_words));
+    if (out_negative && !raw_negative) || (raw_negative && !out_negative && !has_correction_cue(&raw_words)) {
+        return Err("changed a negation");
+    }
 
     let raw_set: std::collections::HashSet<&str> = raw_words.iter().map(String::as_str).collect();
     let novel = out_words.iter().filter(|w| !raw_set.contains(w.as_str())).count();
@@ -422,6 +437,17 @@ mod tests {
         assert!(has_correction_cue(&words("At 5.30 today. My bad, it's 4.30.")));
         assert!(has_correction_cue(&words("Next week. You know what, let's not.")));
         assert!(!has_correction_cue(&words("I know what you mean, my dog is bad at waiting.")));
+    }
+
+    #[test]
+    fn rejects_changed_negations() {
+        let raw = "Let's see, there's not much we can do about the delay.";
+        assert_eq!(plausible(raw, "Let's see if there's anything we can do about the delay."), Err("changed a negation"));
+        assert_eq!(plausible(raw, "Let's see, there isn't much we can do about the delay."), Ok(()));
+        assert_eq!(plausible("We can fix it before Friday.", "We can't fix it before Friday."), Err("changed a negation"));
+        // A repeated "not" may go, and a self-correction may drop one.
+        assert_eq!(plausible("It's not, it's not going to work.", "It's not going to work."), Ok(()));
+        assert_eq!(plausible("I'm not coming tonight. Wait, I am coming tonight.", "I am coming tonight."), Ok(()));
     }
 
     #[test]
