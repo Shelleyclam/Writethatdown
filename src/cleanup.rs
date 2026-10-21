@@ -74,6 +74,24 @@ const FILLERS: &[&str] = &[
     "kind", "of", "and", "the", "a",
 ];
 
+/// Short glue words. Like fillers, they don't count as dropped content when
+/// looking for a dropped idea, and they don't interrupt one either.
+const GLUE_WORDS: &[&str] = &[
+    "to", "or", "but", "in", "on", "at", "for", "with", "from", "by", "as", "is", "are", "was", "were", "be",
+    "it", "it's", "this", "these", "those", "me", "my", "we", "our", "your", "he", "she", "they", "them",
+    "his", "her", "their", "do", "did", "have", "has", "had", "will", "would", "can", "could", "i'm",
+    "i'll", "yeah", "well", "really", "then", "an",
+];
+
+/// Cleanup only removes and fixes words, so the output may be at most this
+/// many words longer than the input ("gonna" -> "going to").
+const MAX_EXTRA_WORDS: usize = 3;
+
+/// This many of the speaker's content words in a row, all missing from the
+/// output, means a sentence or idea was dropped. Self-corrections drop less:
+/// the abandoned part mostly repeats words of the corrected one.
+const MAX_DROPPED_RUN: usize = 4;
+
 /// Long notes are cleaned in pieces of about this many words: small models
 /// tend to summarize long input instead of cleaning it.
 const CHUNK_WORDS: usize = 120;
@@ -221,15 +239,26 @@ fn words(text: &str) -> Vec<String> {
 }
 
 /// Cleanup only removes and fixes words, so check the output against that:
+/// - every number in the output must have been said (spoken or as digits),
+///   otherwise the model changed or invented a time, date or amount;
+/// - the output must not be longer than the transcript, otherwise the model
+///   added something (an answer, a summary);
 /// - nearly every output word should come from the transcript, otherwise the
 ///   model answered or obeyed the text instead of cleaning it;
-/// - most of the speaker's real (non-filler) words should survive, otherwise
-///   the model summarized or dropped sentences.
+/// - most of the speaker's real (non-filler) words should survive, and no
+///   run of them may go missing, otherwise the model summarized or dropped
+///   a sentence or idea.
 fn plausible(raw: &str, cleaned: &str) -> Result<(), &'static str> {
     let raw_words = words(raw);
     let out_words = words(cleaned);
     if out_words.is_empty() {
         return Err("returned nothing");
+    }
+    if !crate::numbers::unsaid_numbers(raw, cleaned).is_empty() {
+        return Err("changed a number");
+    }
+    if out_words.len() > raw_words.len() + MAX_EXTRA_WORDS {
+        return Err("made the text longer");
     }
 
     let raw_set: std::collections::HashSet<&str> = raw_words.iter().map(String::as_str).collect();
@@ -246,7 +275,28 @@ fn plausible(raw: &str, cleaned: &str) -> Result<(), &'static str> {
     if content.len() >= 6 && kept * 10 < content.len() * 7 {
         return Err("dropped too much of what was said");
     }
+    if longest_dropped_run(&raw_words, &out_set) >= MAX_DROPPED_RUN {
+        return Err("dropped part of what was said");
+    }
     Ok(())
+}
+
+/// The most content words in a row (fillers and glue words in between
+/// don't count and don't interrupt) that are missing from the output.
+fn longest_dropped_run(raw_words: &[String], out_set: &std::collections::HashSet<&str>) -> usize {
+    let (mut run, mut longest) = (0, 0);
+    for w in raw_words.iter().map(String::as_str) {
+        if FILLERS.contains(&w) || GLUE_WORDS.contains(&w) {
+            continue;
+        }
+        if out_set.contains(w) {
+            run = 0;
+        } else {
+            run += 1;
+            longest = longest.max(run);
+        }
+    }
+    longest
 }
 
 #[cfg(test)]
@@ -292,5 +342,39 @@ mod tests {
         let ramble = "Just testing when I randomly ramble about stuff to see if this gets it correctly. \
             So I want to build a AI SAS you know product that I can scale and market to the customers";
         assert!(plausible(ramble, "I want to build a scalable AI SAS product that I can market to customers.").is_err());
+    }
+
+    #[test]
+    fn rejects_changed_numbers() {
+        let raw = "Let's have the call at 2.15. No, no, let's do it at 3.15 and invite the design team.";
+        assert_eq!(plausible(raw, "Let's have the call at 3:15 and invite the design team."), Ok(()));
+        assert_eq!(
+            plausible(raw, "Let's have the call at 3:15. No, let's do it at 4:15 and invite the design team."),
+            Err("changed a number")
+        );
+        assert_eq!(plausible("pick me up at six fifteen please", "Pick me up at 6:15, please."), Ok(()));
+    }
+
+    #[test]
+    fn rejects_added_sentences() {
+        let raw = "So yeah, the trip was fun but the hotel was kind of noisy. I guess you know what I mean.";
+        assert_eq!(plausible(raw, "So yeah, the trip was fun, but the hotel was kind of noisy. I guess you know what I mean."), Ok(()));
+        let summarized = "The trip was fun, but the hotel was noisy. I guess what I mean is that the trip was fun \
+            but the hotel was noisy and I would pick a quieter hotel next time.";
+        assert_eq!(plausible(raw, summarized), Err("made the text longer"));
+    }
+
+    #[test]
+    fn rejects_a_dropped_idea() {
+        // Most of it survives (the old 70% check passes), but one idea is gone.
+        let raw = "I want to repaint the kitchen in a lighter grey and replace the old cupboard handles with \
+            brass ones, maybe add some bright tiles behind the sink, and I'll try to finish everything by \
+            Sunday evening before my parents visit.";
+        let cleaned = "I want to repaint the kitchen in a lighter grey and replace the old cupboard handles with \
+            brass ones, and I'll try to finish everything by Sunday evening before my parents visit.";
+        assert_eq!(plausible(raw, cleaned), Err("dropped part of what was said"));
+        // A self-correction drops a few words, which is fine.
+        let corrected = "I'll send it on Monday, no wait, I'll send it on Tuesday morning.";
+        assert_eq!(plausible(corrected, "I'll send it on Tuesday morning."), Ok(()));
     }
 }

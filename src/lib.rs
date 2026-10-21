@@ -10,6 +10,7 @@ pub mod engine;
 pub mod eval;
 pub mod hotkey;
 pub mod notes;
+pub mod numbers;
 pub mod ollama;
 pub mod paste;
 pub mod pipeline;

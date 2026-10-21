@@ -21,40 +21,7 @@ pub fn words(text: &str) -> Vec<String> {
         })
         .filter(|w| !w.is_empty())
         .collect();
-    numbers_to_digits(words)
-}
-
-const UNITS: [&str; 20] = [
-    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
-    "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
-];
-const TENS: [&str; 8] = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
-
-/// "twenty five" -> "25", "three" -> "3". Up to 99, which covers times,
-/// dates, and counts in dictation; bigger numbers are rare enough to leave.
-fn numbers_to_digits(words: Vec<String>) -> Vec<String> {
-    let unit = |w: &str| UNITS.iter().position(|u| *u == w);
-    let mut out = Vec::with_capacity(words.len());
-    let mut i = 0;
-    while i < words.len() {
-        let w = words[i].as_str();
-        if let Some(t) = TENS.iter().position(|x| *x == w) {
-            let tens = (t + 2) * 10;
-            match words.get(i + 1).and_then(|n| unit(n)).filter(|u| (1..10).contains(u)) {
-                Some(u) => {
-                    out.push((tens + u).to_string());
-                    i += 1;
-                }
-                None => out.push(tens.to_string()),
-            }
-        } else if let Some(u) = unit(w) {
-            out.push(u.to_string());
-        } else {
-            out.push(words[i].clone());
-        }
-        i += 1;
-    }
-    out
+    crate::numbers::spoken_to_digits(words)
 }
 
 /// Word error rate as counts, so cases can be added up: the rate over a
