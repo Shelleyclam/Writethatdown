@@ -235,25 +235,57 @@ pub fn run(
     Ok(results)
 }
 
-/// Ask the judge about every case that went through cleanup. A case the
-/// judge can't answer keeps no verdict; `progress` gets each one's error.
+/// After this many failed verdicts in a row the judge is assumed to be
+/// unavailable (e.g. Ollama couldn't load the model) and isn't asked again.
+const JUDGE_MAX_FAILURES_IN_A_ROW: usize = 3;
+
+/// How the judge pass went (`--judge` only).
+#[derive(Debug, Clone, Serialize)]
+pub struct JudgeRun {
+    pub model: String,
+    /// Cases that went through cleanup, and how many got a verdict.
+    pub cases: usize,
+    pub judged: usize,
+    /// Why the judge was given up on, if it was.
+    pub stopped: Option<String>,
+}
+
+/// Ask the judge (`ask`) about every case that went through cleanup. A case
+/// the judge can't answer keeps no verdict; `progress` gets each one's
+/// error. Gives up after [`JUDGE_MAX_FAILURES_IN_A_ROW`] failures in a row.
 pub fn judge_all(
     results: &mut [Vec<CaseResult>],
     variants: &[Variant],
-    judge: &judge::Judge,
+    model: &str,
+    mut ask: impl FnMut(&CaseResult) -> Result<judge::Verdict>,
     mut progress: impl FnMut(&CaseResult, Result<&judge::Verdict, &anyhow::Error>),
-) {
+) -> JudgeRun {
+    let mut run = JudgeRun { model: model.to_string(), cases: 0, judged: 0, stopped: None };
+    let mut failures_in_a_row = 0;
     for (rs, _) in results.iter_mut().zip(variants).filter(|(_, v)| v.cleanup) {
         for r in rs.iter_mut() {
-            match judge.judge(&r.raw, &r.wanted, &r.text) {
+            run.cases += 1;
+            if run.stopped.is_some() {
+                continue;
+            }
+            match ask(r) {
                 Ok(v) => {
+                    failures_in_a_row = 0;
+                    run.judged += 1;
                     r.judge = Some(v);
                     progress(r, Ok(r.judge.as_ref().unwrap()));
                 }
-                Err(e) => progress(r, Err(&e)),
+                Err(e) => {
+                    progress(r, Err(&e));
+                    failures_in_a_row += 1;
+                    if failures_in_a_row >= JUDGE_MAX_FAILURES_IN_A_ROW {
+                        run.stopped = Some(format!("{failures_in_a_row} failures in a row, the last: {e:#}"));
+                    }
+                }
             }
         }
     }
+    run
 }
 
 /// p50 and p95 in milliseconds.
@@ -334,6 +366,8 @@ pub struct Report {
     pub cases_file: String,
     pub cases: usize,
     pub audio_secs: f32,
+    /// `None` when the judge wasn't asked for.
+    pub judge: Option<JudgeRun>,
     pub variants: Vec<VariantReport>,
 }
 
@@ -409,6 +443,37 @@ mod tests {
         assert!(s[0].cleanup_ms.is_none());
         let no_cleanup = summarize(&[result(&["len:short"], 0, None, 1.0)]);
         assert_eq!(no_cleanup[0].drift_flagged, None);
+    }
+
+    #[test]
+    fn judge_gives_up_after_failures_in_a_row() {
+        let variants = [
+            Variant { name: "whisper only".into(), cleanup: false },
+            Variant { name: "with cleanup".into(), cleanup: true },
+        ];
+        let cases = || (0..6).map(|_| result(&[], 0, Some(false), 1.0)).collect::<Vec<_>>();
+        let verdict = || judge::Verdict { preserved: true, reason: String::new() };
+
+        // A failure now and then is just a case without a verdict.
+        let mut results = vec![cases(), cases()];
+        let mut calls = 0;
+        let run = judge_all(&mut results, &variants, "m", |_| {
+            calls += 1;
+            if calls % 2 == 0 { bail!("bad JSON") } else { Ok(verdict()) }
+        }, |_, _| {});
+        assert_eq!((run.cases, run.judged, run.stopped.is_some()), (6, 3, false));
+        assert!(results[0].iter().all(|r| r.judge.is_none()), "only cleanup variants are judged");
+
+        // Three in a row means the judge is unavailable: stop asking.
+        let mut results = vec![cases(), cases()];
+        let mut calls = 0;
+        let run = judge_all(&mut results, &variants, "m", |_| {
+            calls += 1;
+            if calls == 1 { Ok(verdict()) } else { bail!("http status: 500") }
+        }, |_, _| {});
+        assert_eq!(calls, 4);
+        assert_eq!((run.cases, run.judged), (6, 1));
+        assert!(run.stopped.unwrap().contains("http status: 500"));
     }
 
     #[test]

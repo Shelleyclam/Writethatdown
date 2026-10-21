@@ -15,13 +15,27 @@ fn drift(s: &Summary) -> String {
     s.drift_flagged.map(|n| format!("{n} / {}", s.cases)).unwrap_or_else(|| "-".into())
 }
 
-fn judged(s: &Summary) -> String {
-    s.judge_failed.map(|(failed, of)| format!("{failed} / {of}")).unwrap_or_else(|| "-".into())
+/// `cleanup`: whether this variant went through cleanup, so a missing
+/// verdict there means the judge failed rather than didn't apply.
+fn judged(s: &Summary, cleanup: bool) -> String {
+    match s.judge_failed {
+        Some((failed, of)) => format!("{failed} / {of}"),
+        None if cleanup => "unavailable".into(),
+        None => "-".into(),
+    }
 }
 
-/// Whether the judge ran, so its column is only shown when it did.
+/// Whether the judge was asked for, so its column is only shown then. If
+/// it failed, the column stays and says so.
 fn has_judge(report: &Report) -> bool {
-    report.variants.iter().any(|v| v.summary[0].judge_failed.is_some())
+    report.judge.is_some()
+}
+
+/// Why the judge's numbers are missing or partial, if they are.
+fn judge_note(report: &Report) -> Option<String> {
+    let j = report.judge.as_ref()?;
+    let stopped = j.stopped.as_ref()?;
+    Some(format!("Judge stopped early: {} verdict(s) for {} case(s). {stopped}", j.judged, j.cases))
 }
 
 /// A table as aligned text (`markdown: false`) or as a Markdown table.
@@ -56,7 +70,7 @@ fn table(headers: &[&str], rows: &[Vec<String>], markdown: bool) -> String {
     out
 }
 
-fn summary_table(summary: &[Summary], with_judge: bool, markdown: bool) -> String {
+fn summary_table(summary: &[Summary], with_judge: bool, cleanup: bool, markdown: bool) -> String {
     let mut headers = vec!["Group", "Cases", "Raw WER", "Final WER", "Drift"];
     if with_judge {
         headers.push("Judge: lost meaning");
@@ -68,7 +82,7 @@ fn summary_table(summary: &[Summary], with_judge: bool, markdown: bool) -> Strin
             let mut row =
                 vec![s.group.clone(), s.cases.to_string(), percent(s.raw_wer.rate()), percent(s.final_wer.rate()), drift(s)];
             if with_judge {
-                row.push(judged(s));
+                row.push(judged(s, cleanup));
             }
             row.extend([latency(s.transcribe_ms), latency(s.cleanup_ms), latency(s.total_ms)]);
             row
@@ -86,7 +100,7 @@ fn comparison(report: &Report, markdown: bool) -> String {
             let all = &v.summary[0];
             let mut row = vec![v.variant.name.clone(), percent(all.final_wer.rate()), drift(all)];
             if has_judge(report) {
-                row.push(judged(all));
+                row.push(judged(all, v.variant.cleanup));
             }
             row.push(latency(all.total_ms));
             row
@@ -135,11 +149,14 @@ pub fn text(report: &Report) -> String {
     let mut out = format!("\n{}\n", header_line(report));
     for v in &report.variants {
         out.push_str(&format!("\n{}\n", v.variant.name));
-        out.push_str(&summary_table(&v.summary, has_judge(report), false));
+        out.push_str(&summary_table(&v.summary, has_judge(report), v.variant.cleanup, false));
     }
     if report.variants.len() > 1 {
         out.push_str("\nComparison\n");
         out.push_str(&comparison(report, false));
+    }
+    if let Some(note) = judge_note(report) {
+        out.push_str(&format!("\n{note}\n"));
     }
     out
 }
@@ -164,9 +181,12 @@ pub fn markdown(report: &Report) -> String {
             String::new()
         }
     );
+    if let Some(note) = judge_note(report) {
+        out.push_str(&format!("\n**{note}**\n"));
+    }
     for v in &report.variants {
         out.push_str(&format!("\n## {}\n\n", v.variant.name));
-        out.push_str(&summary_table(&v.summary, has_judge(report), true));
+        out.push_str(&summary_table(&v.summary, has_judge(report), v.variant.cleanup, true));
     }
     if report.variants.len() > 1 {
         out.push_str("\n## Comparison\n\n");
@@ -231,5 +251,47 @@ mod tests {
             table(&["Group", "Cases"], &rows, true),
             "| Group | Cases |\n| ----- | ----: |\n| all   |    12 |\n| names |     3 |\n"
         );
+    }
+
+    #[test]
+    fn failed_judge_is_reported_not_hidden() {
+        use crate::eval::{metrics::Wer, summarize, CaseResult, JudgeRun, Variant, VariantReport};
+        let case = CaseResult {
+            file: "001.wav".into(),
+            tags: vec!["len:short".into()],
+            audio_secs: 2.0,
+            said: "hi".into(),
+            raw: "hi".into(),
+            raw_wer: Wer { errors: 0, words: 1 },
+            wanted: "Hi.".into(),
+            text: "Hi.".into(),
+            final_wer: Wer { errors: 0, words: 1 },
+            drift: Some(Default::default()),
+            transcribe_ms: 1.0,
+            cleanup_ms: Some(1.0),
+            total_ms: 2.0,
+            warning: None,
+            judge: None,
+        };
+        let variant = |name: &str, cleanup| VariantReport {
+            variant: Variant { name: name.into(), cleanup },
+            summary: summarize(std::slice::from_ref(&case)),
+            cases: vec![case.clone()],
+        };
+        let report = Report {
+            generated_at: "now".into(),
+            whisper_model: "base.en".into(),
+            threads: 8,
+            cleanup_model: Some("qwen2.5:1.5b".into()),
+            cases_file: "cases.csv".into(),
+            cases: 1,
+            audio_secs: 2.0,
+            judge: Some(JudgeRun { model: "m".into(), cases: 1, judged: 0, stopped: Some("out of memory".into()) }),
+            variants: vec![variant("whisper only", false), variant("with cleanup", true)],
+        };
+        let md = markdown(&report);
+        assert!(md.contains("Judge: lost meaning"), "the column stays");
+        assert!(md.contains("unavailable"));
+        assert!(md.contains("Judge stopped early: 0 verdict(s) for 1 case(s). out of memory"));
     }
 }

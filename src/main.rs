@@ -601,19 +601,31 @@ fn eval(o: &Options) -> Result<()> {
         }
     })?;
 
-    if o.judge {
+    let judge_run = if o.judge {
         // Free the cleanup model's memory before loading the 7B judge.
         if let Some(c) = &cleaner {
             let _ = Ollama::new(None).load(&c.model, "0");
         }
         let judge = evals::judge::Judge::new(evals::judge::MODEL);
         println!("\nJudging with {} (the first case loads the model)...", judge.model);
-        evals::judge_all(&mut results, &variants, &judge, |r, verdict| match verdict {
-            Ok(v) if v.preserved => println!("  {:<16} kept meaning", r.file),
-            Ok(v) => println!("  {:<16} LOST MEANING: {}", r.file, v.reason),
-            Err(e) => eprintln!("  {:<16} no verdict: {e:#}", r.file),
-        });
-    }
+        let run = evals::judge_all(
+            &mut results,
+            &variants,
+            &judge.model,
+            |r| judge.judge(&r.raw, &r.wanted, &r.text),
+            |r, verdict| match verdict {
+                Ok(v) if v.preserved => println!("  {:<16} kept meaning", r.file),
+                Ok(v) => println!("  {:<16} LOST MEANING: {}", r.file, v.reason),
+                Err(e) => eprintln!("  {:<16} no verdict: {e:#}", r.file),
+            },
+        );
+        if run.stopped.is_some() {
+            eprintln!("  Giving up on the judge. Out of memory? It needs about 5 GB free.");
+        }
+        Some(run)
+    } else {
+        None
+    };
 
     let now = chrono::Local::now();
     let report = evals::Report {
@@ -624,6 +636,7 @@ fn eval(o: &Options) -> Result<()> {
         cases_file: cases_path.display().to_string(),
         cases: cases.len(),
         audio_secs: results[0].iter().map(|r| r.audio_secs).sum(),
+        judge: judge_run,
         variants: variants
             .into_iter()
             .zip(results)
@@ -650,6 +663,11 @@ fn eval(o: &Options) -> Result<()> {
     } else {
         // A run on some of the cases shouldn't replace the full summary.
         println!("{} not updated (only some cases were run)", md_path.display());
+    }
+    // Everything else is valid and saved, but a script (or a quick glance)
+    // shouldn't take this for a complete judged run.
+    if report.judge.as_ref().is_some_and(|j| j.stopped.is_some()) {
+        bail!("The judge stopped early; WER, drift and latency are saved, judge verdicts are missing");
     }
     Ok(())
 }

@@ -114,6 +114,11 @@ check, not instead of it: a language model's verdicts vary with wording, and its
 sometimes contradicts its own verdict. Where the two disagree, read the case yourself in
 the per-case CSV.
 
+The 7B judge needs about 5 GB of free memory. If it fails three cases in a row (usually
+because Ollama couldn't load it), the eval stops asking, still saves every other result,
+marks the judge column "unavailable", and exits with an error so the run isn't mistaken
+for a complete one.
+
 ## 4. Read the results
 
 Each run writes:
