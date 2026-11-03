@@ -56,6 +56,7 @@ Built with Rust ([whisper.cpp](https://github.com/ggml-org/whisper.cpp) via
 In PowerShell:
 
 ```powershell
+winget install Git.Git
 winget install Rustlang.Rustup
 winget install Kitware.CMake
 winget install LLVM.LLVM
@@ -67,6 +68,14 @@ Close and reopen PowerShell so the new tools are on your PATH.
 
 LLVM is needed to generate the whisper.cpp bindings. If you install it somewhere other
 than `C:\Program Files\LLVM`, update `LIBCLANG_PATH` in `.cargo/config.toml`.
+
+Then get the code, at a short path (the MSVC linker fails on paths longer than 260
+characters):
+
+```powershell
+git clone https://github.com/Shelleyclam/Writethatdown.git C:\code\writethatdown
+cd C:\code\writethatdown
+```
 
 ### 2. Ollama and its models
 
@@ -107,9 +116,7 @@ npm install
 npx tauri build --no-bundle
 ```
 
-The first build compiles whisper.cpp and takes a few minutes. Keep the project at a
-short path (like `C:\code\writethatdown`): the MSVC linker fails on paths longer than
-260 characters.
+The first build compiles whisper.cpp and takes a few minutes.
 
 ## Using the app
 
@@ -154,6 +161,8 @@ benchmarking and debugging.
 | `bench-cleanup [models]` | Compare cleanup models on built-in test sentences |
 | `note <text>` / `ask <question>` | File a typed note / ask about your notes |
 | `reindex` | Make notes saved while Ollama was off searchable |
+| `record [name]` | Record eval clips into `eval\cases\` (see [eval/README.md](eval/README.md)) |
+| `eval` | Score the pipeline on your recorded clips (see [Evaluation](#evaluation)) |
 | `--model <name>` | `base.en` or `small.en` (default: `base.en`) |
 | `--threads <n>` | CPU threads for Whisper (default: up to 8) |
 | `--llm <name>` | Ollama model for cleanup (default: `qwen2.5:3b`) |
@@ -164,6 +173,21 @@ benchmarking and debugging.
 
 Set `WHISPERFLOW_DB` to use a different database, for example a scratch one for testing.
 Don't run the app and the command-line push-to-talk at the same time: both would paste.
+
+## Evaluation
+
+`whisperflow eval` runs recorded dictations through the same pipeline the app uses and
+measures:
+
+- **WER** (word error rate): raw, for what Whisper heard against what was said, and
+  final, for what would be pasted against what was wanted.
+- **Meaning drift**: cases where cleanup added or dropped meaningful words, checked
+  deterministically, with an optional second opinion from a local LLM judge.
+- **Latency**: p50 and p95 for transcription, cleanup and the total, on the CPU.
+
+Results are broken down by tags such as names, numbers, self-corrections and length.
+How to record clips, fill in the sheet and run it is in [eval/README.md](eval/README.md).
+Recordings, transcripts and results stay on your machine and are not in this repo.
 
 ## Troubleshooting
 
@@ -185,15 +209,19 @@ src/audio.rs       microphone capture, conversion to 16 kHz mono
 src/hotkey.rs      Right Ctrl / Right Alt keys (Windows low-level keyboard hook)
 src/engine.rs      the dictation loop: record, transcribe, clean up, paste or file, save
 src/transcribe.rs  Whisper model loading and transcription
+src/pipeline.rs    transcribe + clean up, shared by dictation and the eval
 src/cleanup.rs     LLM cleanup pass, with checks that fall back to the raw text
+src/numbers.rs     matching spoken and written numbers ("four thirty" = "4:30")
 src/paste.rs       paste into the focused app, saving and restoring the clipboard
 src/storage.rs     SQLite: history, notes, categories, embedding vectors
 src/notes.rs       filing notes: "file this under", categories, chunking, search index
 src/ask.rs         answering questions from notes, with citations
 src/ollama.rs      small client for the local Ollama server
 src/main.rs        command-line tool
+src/eval/          eval suite: WER, meaning drift, latency, reports
 app/src-tauri/     desktop app backend: tray, pill window, commands
 app/src/           desktop app UI (React)
+eval/              how to record and run evals, and the empty cases sheet
 scripts/           Whisper model downloader
 ```
 
