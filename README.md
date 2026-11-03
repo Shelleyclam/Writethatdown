@@ -64,6 +64,9 @@ Built with Rust ([whisper.cpp](https://github.com/ggml-org/whisper.cpp) via
 
 - Windows only.
 - English only.
+- The first word can be cut off: the microphone only opens when the key is pressed.
+- Long dictations are slow: for clips over 30 seconds, the total time to paste is
+  about 12 s typically and up to about 28 s (p95), mostly cleanup on the CPU.
 - The LLM judge for meaning drift isn't reliable yet; the deterministic drift check is
   the one to trust.
 
