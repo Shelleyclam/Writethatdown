@@ -39,6 +39,34 @@ Built with Rust ([whisper.cpp](https://github.com/ggml-org/whisper.cpp) via
 
 <sub>Screenshots use made-up example data.</sub>
 
+## Status
+
+**Working**
+
+- Tray app: runs in the tray with Start at login and Quit; closing the window keeps it
+  running.
+- Right Ctrl dictation: transcribed, cleaned up (fillers, self-corrections, numbers like
+  "four thirty" → "4:30") and pasted into the focused app, with the clipboard restored.
+- Hands-free: tap to start, tap to stop, Esc to cancel; Ctrl shortcuts don't trigger it.
+- Right Alt notes: filed into categories automatically or with "file this under …";
+  categories can be renamed and notes edited.
+- Ask: answers questions from your notes and cites them.
+- History: copy again, see the raw transcript, save as a note, delete.
+- Fallback: if Ollama isn't running, the raw transcript is still pasted.
+
+**In progress**
+
+- Cleanup accuracy fixes from the eval (e.g. the LLM changing a meeting time): checks
+  and a new prompt are in, being validated in daily use.
+- A personal dictionary that learns from your corrections.
+
+**Known limits**
+
+- Windows only.
+- English only.
+- The LLM judge for meaning drift isn't reliable yet; the deterministic drift check is
+  the one to trust.
+
 ## Requirements
 
 - Windows 10 or 11, 64-bit.
