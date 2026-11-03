@@ -254,7 +254,13 @@ What the eval caught, and what changed:
   (26.3% vs 18.2%). A prompt built on my own style rules and examples, plus the larger
   model, brought them to 13.9%.
 
-**What this means:** _TODO: my interpretation._
+**What this means:** I mostly dictate long notes to jot down detailed ideas, so long
+dictations matter most to me. Cleanup now improves them (40.8% → 36.2%) and no longer
+changes facts. A wrong fact is worse than a wrong word, so when a check fails, the app
+pastes the raw transcript instead. The cost is speed: a long note can take about 28 s at
+p95, which is too long to wait. Next I'd transcribe in chunks while I'm still speaking,
+so most of the work is done by the time I stop. Medium dictations got slightly worse;
+that's next after latency.
 
 ## Decisions and trade-offs
 
