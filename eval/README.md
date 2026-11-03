@@ -50,7 +50,8 @@ Tips:
 
 ## 2. Fill in the sheet
 
-Open `eval\cases.csv` in Excel. One row per recording:
+Copy `eval\cases.template.csv` to `eval\cases.csv` and open it in Excel. One row per
+recording:
 
 | Column | What goes in it |
 |---|---|
@@ -149,6 +150,6 @@ vs "email") count as differences. With ~30 cases, p95 is close to the slowest ca
 
 ## Privacy
 
-Recordings (`eval\cases\`) and results (`eval\results\`) are kept out of git: they're
-your voice and your words. `eval\cases.csv` and `eval\RESULTS.md` are committed. If you'd
-rather keep your sentences private too, add `eval/cases.csv` to `.gitignore`.
+Recordings (`eval\cases\`), the filled-in sheet (`eval\cases.csv`), and results
+(`eval\results\`, `eval\RESULTS.md`) are kept out of git: they're your voice and your
+words. Only the empty template is committed.

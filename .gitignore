@@ -9,3 +9,5 @@
 # Eval recordings are your voice; results contain your transcripts.
 /eval/cases/
 /eval/results/
+/eval/cases.csv
+/eval/RESULTS.md
