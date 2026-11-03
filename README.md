@@ -23,6 +23,8 @@ Built with Rust ([whisper.cpp](https://github.com/ggml-org/whisper.cpp) via
 `whisper-rs`), [Ollama](https://ollama.com), SQLite with
 [sqlite-vec](https://github.com/asg017/sqlite-vec), and a Tauri 2 + React desktop app.
 
+**Demo:** [watch a short walkthrough on Loom](https://www.loom.com/share/ecef5becb72f492db1598fcbedcbe12d)
+
 ## Screenshots
 
 <p align="center">
@@ -256,7 +258,8 @@ What the eval caught, and what changed:
 
 **What this means:** I mostly dictate long notes to jot down detailed ideas, so long
 dictations matter most to me. Cleanup now improves them (40.8% → 36.2%) and no longer
-changes facts. A wrong fact is worse than a wrong word, so when a check fails, the app
+changed facts in my 33 recordings. A wrong fact is worse than a wrong word, so when a
+check fails, the app
 pastes the raw transcript instead. The cost is speed: a long note can take about 28 s at
 p95, which is too long to wait. Next I'd transcribe in chunks while I'm still speaking,
 so most of the work is done by the time I stop. Medium dictations got slightly worse;
