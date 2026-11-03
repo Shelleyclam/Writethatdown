@@ -220,6 +220,63 @@ Results are broken down by tags such as names, numbers, self-corrections and len
 How to record clips, fill in the sheet and run it is in [eval/README.md](eval/README.md).
 Recordings, transcripts and results stay on your machine and are not in this repo.
 
+### Results
+
+33 of my own dictations (10.4 minutes), Whisper `base.en` on an i5-12500H CPU. Raw
+Whisper WER is 14.7%. Final WER compares what would be pasted with the text I wanted,
+so it includes Whisper's mistakes as well as cleanup's.
+
+| | Whisper only | Cleanup before fixes | Cleanup now |
+|---|---|---|---|
+| Final WER, all | 39.8% | 39.0% | **35.0%** |
+| Short dictations (< 10 s, 16 clips) | 18.2% | 26.3% | **13.9%** |
+| Medium (10–30 s, 11 clips) | 50.2% | 41.4% | 43.9% |
+| Long (> 30 s, 6 clips) | 40.5% | 40.8% | **36.2%** |
+| Meaning drift flagged | – | 6 of 33 | 5 of 33 |
+| Total latency p50 / p95 | 1.7 / 6.3 s | 2.2 / 15.8 s | 3.9 / 28.2 s |
+
+"Before fixes" is the 21 October baseline (qwen2.5:1.5b, original prompt). "Whisper
+only" and "now" (qwen2.5:3b) are from the same run on 3 November. That run's
+transcription was also slower than on 21 October (p50 1.7 s vs 1.3 s), so part of the
+latency gap is the machine, not the pipeline.
+
+What the eval caught, and what changed:
+
+- **Cleanup changed a meeting time** (4:30 → 5:30). Cleanups that contain a number that
+  wasn't said are now rejected and the raw transcript is pasted.
+- **Cleanup dropped a whole idea** from a long dictation. A run of 4 or more missing
+  content words now counts as a failed cleanup.
+- **Cleanup added a summary sentence nobody said.** Output more than 3 words longer than
+  the input is rejected.
+- **The larger model turned a negative statement positive.** Adding or dropping a
+  negation is rejected (dropping one is allowed after "no wait"-style corrections).
+- **Cleanup over-trimmed short casual messages**: they came out worse than raw Whisper
+  (26.3% vs 18.2%). A prompt built on my own style rules and examples, plus the larger
+  model, brought them to 13.9%.
+
+**What this means:** _TODO: my interpretation._
+
+## Decisions and trade-offs
+
+- **Fully local, on the CPU.** No API keys, no cloud, and it works offline: what you
+  dictate never leaves the machine. The cost is smaller models and slower long
+  dictations than a cloud service.
+- **Whisper `base.en` over `small.en`.** On real dictation `base.en` transcribed at
+  about 0.10× real time vs 0.36× for `small.en`, with near-identical accuracy.
+  `small.en` is still one flag away (`--model small.en`).
+- **qwen2.5:3b over 1.5b for cleanup.** Final WER 35.0% vs 37.8% and short dictations
+  13.9% vs 20.4%, for about 0.4 s more on a short dictation, 3–4 s more on long ones,
+  and 2.3 GB of RAM instead of 1.1 GB. It unloads after 15 idle minutes to give the
+  memory back.
+- **The LLM never gets the last word.** Every cleanup is checked for unsaid numbers,
+  flipped negations, added text and dropped ideas. If a check fails, or Ollama is down,
+  the raw transcript is pasted: a visible typo is better than a silently changed
+  meaning.
+- **Speed where it's felt, quality where it isn't.** Dictation uses the small model
+  because you're waiting on it. Filing notes and answering questions use qwen2.5:7b,
+  because the 3B model filed notes into the wrong categories and a few extra seconds
+  matter less there.
+
 ## Troubleshooting
 
 - **"only silence, ignored"**: Windows is using the wrong microphone. Pick the right one
